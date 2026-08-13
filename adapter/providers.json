@@ -1,0 +1,61 @@
+{
+  "version": 3,
+  "health_ttl_seconds": 300,
+  "routes": {
+    "text": {
+      "priority": ["chatgpt-sol-xhigh", "deepseek-expert", "qwen-max-text", "gemini-current"],
+      "local_fallback": false
+    },
+    "multimodal": {
+      "priority": ["chatgpt-sol-xhigh", "gemini-current", "qwen-max-multimodal"],
+      "local_fallback": true
+    }
+  },
+  "providers": {
+    "chatgpt-sol-xhigh": {
+      "adapter": "chatgpt-web",
+      "url": "https://chatgpt.com/",
+      "target": {
+        "model": "GPT-5.6 Sol",
+        "reasoning_tiers": ["最高", "极高", "高", "中"]
+      }
+    },
+    "deepseek-expert": {
+      "adapter": "deepseek-web",
+      "url": "https://chat.deepseek.com/",
+      "target": {
+        "mode": "专家模式",
+        "context_tokens": 1000000,
+        "reserved_output_tokens": 350000,
+        "max_input_tokens": 650000
+      }
+    },
+    "qwen-max-text": {
+      "adapter": "qwen-web",
+      "url": "https://chat.qwen.ai/",
+      "target": {
+        "models": ["Qwen3.8-Max", "Qwen3.7-Max"],
+        "canonical_models": {
+          "Qwen3.8-Max": "qwen3.8-max-preview",
+          "Qwen3.7-Max": "qwen3.7-max"
+        }
+      }
+    },
+    "qwen-max-multimodal": {
+      "adapter": "qwen-web",
+      "url": "https://chat.qwen.ai/",
+      "target": {
+        "models": ["Qwen3.8-Max", "Qwen3.7-Plus"],
+        "canonical_models": {
+          "Qwen3.8-Max": "qwen3.8-max-preview",
+          "Qwen3.7-Plus": "qwen3.7-plus"
+        }
+      }
+    },
+    "gemini-current": {
+      "adapter": "gemini-web",
+      "url": "https://gemini.google.com/app",
+      "target": { "mode": "current" }
+    }
+  }
+}

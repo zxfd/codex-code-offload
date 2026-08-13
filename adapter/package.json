@@ -1,0 +1,8 @@
+{
+  "name": "codex-agentchat-offload-adapter",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "repomix": "1.18.0"
+  }
+}
