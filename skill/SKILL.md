@@ -161,7 +161,8 @@ Use `requestMetadata.modality = 'multimodal'` for routing and event classificati
 For the generic text route, read `BROWSER_PROMPT_FILE` and `OFFLOAD_REQUEST_FILE` from the command output. Open the provider only through connected Chrome and run the generic runner. The browser connection must follow the Chrome Browser Skill first.
 
 ```js
-const { runProviderFallback } = await import('~/.codex/skills/agentchat-code-offload/scripts/web-provider-runner.mjs');
+const { homedir } = await import('node:os');
+const { runProviderFallback } = await import(homedir() + '/.codex/skills/agentchat-code-offload/scripts/web-provider-runner.mjs');
 globalThis.webReasoningTabs ??= new Map();
 const result = await runProviderFallback({
   browser: globalThis.chrome,
@@ -181,6 +182,8 @@ nodeRepl.write(result);
 ```
 
 The runner owns fallback and Provider UI detail. A first-round request always opens a new Chrome tab; its tab key is `request_id + provider`, so a shared `webReasoningTabs` map remains isolated across simultaneous coding tasks. Preserve the same `request_id` only for later context rounds of that same request, which then reuse their own Provider tab. Do not inspect provider DOM/source beyond what the provider adapter needs.
+
+For ChatGPT, a long prompt (at least 4,000 characters) is submitted in two steps: the code/document context is pasted and sent first, then the shorter instruction is pasted and sent separately, so the model performs the requested analysis instead of only acknowledging a large pasted-text attachment. The runner closes the request's Chrome tab automatically when the answer is terminal or a provider fails; a tab is kept only while a `NEED_MORE_CONTEXT` continuation is still possible.
 
 ## 5. Context loop
 

@@ -12,7 +12,7 @@ import {
   validatePromptPath,
 } from './provider-utils.mjs';
 
-const OFFLOAD_HOME = process.env.CODEX_CODE_OFFLOAD_HOME || join(homedir(), '.local', 'share', 'codex-code-offload');
+const OFFLOAD_HOME = (typeof process !== 'undefined' && process.env && process.env.CODEX_CODE_OFFLOAD_HOME) || join(homedir(), '.local', 'share', 'codex-code-offload');
 const DEFAULT_CONFIG_PATH = join(OFFLOAD_HOME, 'providers.json');
 const DEFAULT_STATE_DIR = join(homedir(), '.local', 'state', 'codex-web-reasoning');
 const ADAPTERS = {
@@ -151,6 +151,18 @@ async function importAdapter(adapter) {
   return import(path);
 }
 
+function isTerminalAnswer(answer) {
+  return !String(answer || '').trimStart().startsWith('NEED_MORE_CONTEXT');
+}
+
+async function closeTab(tab) {
+  try {
+    await tab.close();
+  } catch {
+    // The tab may already be closed by the provider adapter.
+  }
+}
+
 export async function runWebProvider({ providerId, provider, tab, promptPath, timeoutMs, continuation = false, uiEvidence = false }) {
   const module = await importAdapter(provider.adapter);
   if (typeof module.run !== 'function') throw new Error(`provider adapter has no run(): ${provider.adapter}`);
@@ -237,6 +249,10 @@ export async function runProviderFallback({
         success: true,
       };
       logEvent(stateDir, event);
+      if (isTerminalAnswer(result.answer)) {
+        tabs.delete(tabKey);
+        await closeTab(tab);
+      }
       return {
         ...result,
         providerId,
@@ -285,6 +301,8 @@ export async function runProviderFallback({
       };
       writeHealth(stateDir, health);
       attempts.push({ provider: providerId, status: 'unavailable', reason, ui_evidence_handed_off: evidenceHandedOff });
+      tabs.delete(tabKey);
+      await closeTab(tab);
       // Web transport and extraction failures are provider-local for this request;
       // record them and try the configured fallback rather than silently changing models.
     }

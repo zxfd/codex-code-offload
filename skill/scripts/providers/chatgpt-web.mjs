@@ -29,6 +29,9 @@ const LONG_COMPOSER_SETTLE_MS = 120_000;
 const POST_FILL_STRENGTH_RETRY_MS = 10_000;
 const NEW_CHAT_LABELS = ['新聊天', 'New chat'];
 
+const CHATGPT_TWO_STEP_MIN_CHARS = 4_000;
+const CONTEXT_SECTION_HEADERS = ['CODE_CONTEXT', 'DOCUMENT_CONTEXT', 'ADDITIONAL_CONTEXT'];
+
 export function chatGptComposerSettleTimeout(promptLength) {
   return Number(promptLength || 0) >= LONG_PROMPT_CHARS
     ? LONG_COMPOSER_SETTLE_MS
@@ -463,6 +466,127 @@ async function ensureConfiguredReasoningSelection({ tab, provider, uiEvidence, s
   return selectBestAvailableReasoningTier({ tab, provider, uiEvidence, stage });
 }
 
+function splitChatGptContext(promptText) {
+  const nl = String.fromCharCode(10);
+  let start = -1;
+  let end = -1;
+  for (const header of CONTEXT_SECTION_HEADERS) {
+    const marker = nl + nl + header + ':' + nl;
+    const index = promptText.indexOf(marker);
+    if (index !== -1 && (start === -1 || index < start)) {
+      start = index;
+      end = index + marker.length;
+    }
+  }
+  if (start === -1) return { instruction: promptText, context: '' };
+  return {
+    instruction: promptText.slice(0, start).trim(),
+    context: promptText.slice(end).trim(),
+  };
+}
+
+async function submitChatGptComposer({ tab, provider, uiEvidence, input, text }) {
+  const composerSettleTimeout = chatGptComposerSettleTimeout(text.length);
+  await runChatGptStageWithRecovery({
+    tab,
+    action: () => input.fill(text, { timeoutMs: Math.max(30_000, composerSettleTimeout) }),
+  });
+  await runChatGptStageWithRecovery({
+    tab,
+    action: () => waitForComposerSubmissionReadiness({
+      tab,
+      provider,
+      uiEvidence,
+      stage: 'post_fill_attachment_settle',
+      promptLength: text.length,
+    }),
+  });
+  const reasoning = await runChatGptStageWithRecovery({
+    tab,
+    action: () => ensureConfiguredReasoningSelection({
+      tab,
+      provider,
+      uiEvidence,
+      stage: 'final_pre_submit_reasoning_selection',
+      currentSelectionRetryMs: POST_FILL_STRENGTH_RETRY_MS,
+    }),
+  });
+  const send = await runChatGptStageWithRecovery({
+    tab,
+    action: () => waitForComposerSubmissionReadiness({
+      tab,
+      provider,
+      uiEvidence,
+      stage: 'final_pre_submit_settle',
+      promptLength: text.length,
+    }),
+  });
+  await runChatGptStageWithRecovery({
+    tab,
+    action: async () => {
+      if (await locatorVisible(rateLimitDialog(tab))) {
+        await unavailableWithEvidence({
+          tab,
+          message: 'ChatGPT rate-limit popup interrupted send preflight',
+          stage: 'send_preflight',
+          provider,
+          uiEvidence,
+          names: ['发送提示', '与 ChatGPT 聊天', ...STRENGTH_TRIGGER_LABELS],
+        });
+      }
+      try {
+        await requireVisible(send, 'ChatGPT send control is unavailable');
+        if (!await send.isEnabled()) throw new Error('send control is disabled');
+      } catch (error) {
+        if (error?.code === 'PROVIDER_UNAVAILABLE') throw error;
+        await unavailableWithEvidence({
+          tab,
+          message: 'ChatGPT send control is unavailable: ' + String(error?.message || error).slice(0, 180),
+          stage: 'send_preflight',
+          provider,
+          uiEvidence,
+          names: ['发送提示', '与 ChatGPT 聊天', ...STRENGTH_TRIGGER_LABELS],
+        });
+      }
+    },
+  });
+  try {
+    await send.click({ timeoutMs: 30_000 });
+  } catch (error) {
+    if (await recoverRateLimitAfterSubmit({ tab })) return reasoning;
+    await unavailableWithEvidence({
+      tab,
+      message: 'ChatGPT send control is unavailable: ' + String(error?.message || error).slice(0, 180),
+      stage: 'submit',
+      provider,
+      uiEvidence,
+      names: ['发送提示', '与 ChatGPT 聊天', ...STRENGTH_TRIGGER_LABELS],
+    });
+  }
+  return reasoning;
+}
+
+async function locateNewAssistantAnswer({ tab, previousGroupCount }) {
+  const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const count = await assistantGroups.count();
+    if (count > previousGroupCount) return assistantGroups.nth(count - 1);
+    await tab.playwright.waitForTimeout(300);
+  }
+  return tab.playwright.getByRole('main').getByText(/.+/).last();
+}
+
+async function waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs, checkInterrupted }) {
+  const answer = await locateNewAssistantAnswer({ tab, previousGroupCount });
+  return waitForAssistantAnswer({
+    answer,
+    stopButtons: [tab.playwright.getByRole('button', { name: '停止回答', exact: true })],
+    timeoutMs,
+    checkInterrupted,
+  });
+}
+
 export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false }) {
   if (!tab?.playwright || typeof tab.url !== 'function') throw new Error('a controlled Browser tab is required');
   const currentUrl = new URL(await tab.url());
@@ -475,137 +599,52 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
     await unavailableWithEvidence({ tab, message: 'ChatGPT login is required', stage: 'login_check', provider, uiEvidence, names: ['登录'] });
   }
   if (!continuation) {
-    await runChatGptStageWithRecovery({
-      tab,
-      action: () => ensureFreshConversation({ tab, provider, uiEvidence }),
-    });
-    await runChatGptStageWithRecovery({
-      tab,
-      action: () => ensureChatMode({ tab, provider, uiEvidence, stage: 'initial_chat_mode' }),
-    });
+    await runChatGptStageWithRecovery({ tab, action: () => ensureFreshConversation({ tab, provider, uiEvidence }) });
+    await runChatGptStageWithRecovery({ tab, action: () => ensureChatMode({ tab, provider, uiEvidence, stage: 'initial_chat_mode' }) });
   }
-  await runChatGptStageWithRecovery({
-    tab,
-    action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'initial_recovery' }),
-  });
-  let selectedReasoning = await runChatGptStageWithRecovery({
-    tab,
-    action: () => ensureConfiguredReasoningSelection({ tab, provider, uiEvidence, stage: 'initial_reasoning_selection' }),
-  });
+  await runChatGptStageWithRecovery({ tab, action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'initial_recovery' }) });
+  let selectedReasoning = await runChatGptStageWithRecovery({ tab, action: () => ensureConfiguredReasoningSelection({ tab, provider, uiEvidence, stage: 'initial_reasoning_selection' }) });
 
-  const answers = tab.playwright.getByRole('heading', { name: 'ChatGPT 说：', exact: true });
-  const previousAnswerCount = await answers.count();
-  const input = await runChatGptStageWithRecovery({
-    tab,
-    action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'pre_submit_recovery' }),
-  });
+  const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');
+  let previousGroupCount = await assistantGroups.count();
+  const input = await runChatGptStageWithRecovery({ tab, action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'pre_submit_recovery' }) });
+
+  const checkInterrupted = async () => {
+    if (!await locatorVisible(rateLimitDialog(tab))) return;
+    await unavailableWithEvidence({
+      tab,
+      message: 'ChatGPT rate-limit popup interrupted answer wait',
+      stage: 'answer_wait',
+      provider,
+      uiEvidence,
+      names: ['停止回答', 'ChatGPT 说：'],
+    });
+  };
+
   const { promptRemoved } = await submitPromptFromFile({
     promptPath,
     submit: async promptText => {
-      const composerSettleTimeout = chatGptComposerSettleTimeout(promptText.length);
-      await runChatGptStageWithRecovery({
-        tab,
-        action: () => input.fill(promptText, { timeoutMs: Math.max(30_000, composerSettleTimeout) }),
-      });
-      await runChatGptStageWithRecovery({
-        tab,
-        action: () => waitForComposerSubmissionReadiness({
+      const split = splitChatGptContext(promptText);
+      const useTwoStep = Boolean(split.context) && promptText.length >= CHATGPT_TWO_STEP_MIN_CHARS;
+      if (useTwoStep) {
+        selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.context });
+        await runChatGptStageWithRecovery({
           tab,
-          provider,
-          uiEvidence,
-          stage: 'post_fill_attachment_settle',
-          promptLength: promptText.length,
-        }),
-      });
-      selectedReasoning = await runChatGptStageWithRecovery({
-        tab,
-        action: () => ensureConfiguredReasoningSelection({
-          tab,
-          provider,
-          uiEvidence,
-          stage: 'final_pre_submit_reasoning_selection',
-          currentSelectionRetryMs: POST_FILL_STRENGTH_RETRY_MS,
-        }),
-      });
-      const send = await runChatGptStageWithRecovery({
-        tab,
-        action: () => waitForComposerSubmissionReadiness({
-          tab,
-          provider,
-          uiEvidence,
-          stage: 'final_pre_submit_settle',
-          promptLength: promptText.length,
-        }),
-      });
-      await runChatGptStageWithRecovery({
-        tab,
-        action: async () => {
-          if (await locatorVisible(rateLimitDialog(tab))) {
-            await unavailableWithEvidence({
-              tab,
-              message: 'ChatGPT rate-limit popup interrupted send preflight',
-              stage: 'send_preflight',
-              provider,
-              uiEvidence,
-              names: ['发送提示', '与 ChatGPT 聊天', ...STRENGTH_TRIGGER_LABELS],
-            });
-          }
-          try {
-            await requireVisible(send, 'ChatGPT send control is unavailable');
-            if (!await send.isEnabled()) throw new Error('send control is disabled');
-          } catch (error) {
-            if (error?.code === 'PROVIDER_UNAVAILABLE') throw error;
-            await unavailableWithEvidence({
-              tab,
-              message: `ChatGPT send control is unavailable: ${String(error?.message || error).slice(0, 180)}`,
-              stage: 'send_preflight',
-              provider,
-              uiEvidence,
-              names: ['发送提示', '与 ChatGPT 聊天', ...STRENGTH_TRIGGER_LABELS],
-            });
-          }
-        },
-      });
-      try {
-        // Intentionally outside the retry wrapper: once dispatch begins, never resend blindly.
-        await send.click({ timeoutMs: 30_000 });
-      } catch (error) {
-        if (await recoverRateLimitAfterSubmit({ tab })) return;
-        await unavailableWithEvidence({
-          tab,
-          message: `ChatGPT send control is unavailable: ${String(error?.message || error).slice(0, 180)}`,
-          stage: 'submit',
-          provider,
-          uiEvidence,
-          names: ['发送提示', '与 ChatGPT 聊天', ...STRENGTH_TRIGGER_LABELS],
+          action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs: Math.min(timeoutMs, 120_000), checkInterrupted }),
         });
+        previousGroupCount = await assistantGroups.count();
+        selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.instruction });
+      } else {
+        selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: promptText });
       }
     },
   });
-  const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');
-  const groupCount = await assistantGroups.count();
-  const answer = groupCount > previousAnswerCount
-    ? assistantGroups.nth(groupCount - 1)
-    : tab.playwright.getByRole('main').getByText(/.+/).last();
+
   const text = await runChatGptStageWithRecovery({
     tab,
-    action: () => waitForAssistantAnswer({
-      answer,
-      stopButtons: [tab.playwright.getByRole('button', { name: '停止回答', exact: true })],
-      timeoutMs,
-      checkInterrupted: async () => {
-        if (!await locatorVisible(rateLimitDialog(tab))) return;
-        await unavailableWithEvidence({
-          tab,
-          message: 'ChatGPT rate-limit popup interrupted answer wait',
-          stage: 'answer_wait',
-          provider,
-          uiEvidence,
-          names: ['停止回答', 'ChatGPT 说：'],
-        });
-      },
-    }),
+    action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs, checkInterrupted }),
   });
+
   return {
     provider: 'ChatGPT',
     model: provider.target.model,
