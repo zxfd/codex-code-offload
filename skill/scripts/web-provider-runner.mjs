@@ -14,6 +14,7 @@ import { validateImagePaths } from './media-upload.mjs';
 const OFFLOAD_HOME = (typeof process !== 'undefined' && process.env && process.env.CODEX_CODE_OFFLOAD_HOME) || join(homedir(), '.local', 'share', 'codex-code-offload');
 const DEFAULT_CONFIG_PATH = join(OFFLOAD_HOME, 'providers.json');
 const DEFAULT_STATE_DIR = join(homedir(), '.local', 'state', 'codex-web-reasoning');
+const HEALTH_FAILURE_PROTOCOL_VERSION = 2;
 const ADAPTERS = {
   'chatgpt-web': './providers/chatgpt-web.mjs',
   'deepseek-web': './providers/deepseek-web.mjs',
@@ -133,8 +134,9 @@ function logEvent(stateDir, event) {
   appendFileSync(log, `${JSON.stringify(event)}\n`, { mode: 0o600 });
 }
 
-function isCoolingDown(entry, ttlMs, now) {
+export function isCoolingDown(entry, ttlMs, now) {
   return entry?.status === 'unavailable'
+    && entry.failure_protocol_version === HEALTH_FAILURE_PROTOCOL_VERSION
     && entry.last_failure
     && entry.target_signature === entry.current_target_signature
     && Date.parse(entry.last_failure) + ttlMs > now;
@@ -252,6 +254,7 @@ export async function runProviderFallback({
         modality: route.modality,
         image_count: mediaFiles.length,
         result_length: result.answer.length,
+        response_confirmed: result.responseConfirmed === true,
         success: true,
       };
       logEvent(stateDir, event);
@@ -288,14 +291,30 @@ export async function runProviderFallback({
           attempts.push({ provider: providerId, status: 'evidence_unavailable', reason: String(evidenceError?.message || evidenceError).slice(0, 180) });
         }
       }
-      health.providers[providerId] = {
-        status: 'unavailable',
-        last_failure: new Date().toISOString(),
-        failure_reason: reason,
-        target_signature: providerSignature,
-      };
+      const cacheFailure = error?.cacheFailure !== false;
+      if (cacheFailure) {
+        health.providers[providerId] = {
+          status: 'unavailable',
+          last_failure: new Date().toISOString(),
+          failure_reason: reason,
+          failure_protocol_version: HEALTH_FAILURE_PROTOCOL_VERSION,
+          target_signature: providerSignature,
+        };
+      } else if (health.providers[providerId]?.status === 'unavailable') {
+        // An ambiguous post-send failure is not evidence that the provider is
+        // unavailable. Remove an older negative cache entry so the next request
+        // can reconcile ChatGPT again instead of falling back immediately.
+        delete health.providers[providerId];
+      }
       writeHealth(stateDir, health);
-      attempts.push({ provider: providerId, status: 'unavailable', reason, ui_evidence_discarded: uiEvidenceDiscarded });
+      attempts.push({
+        provider: providerId,
+        status: cacheFailure ? 'unavailable' : 'ambiguous_post_send',
+        reason,
+        send_started: error?.sendStarted === true,
+        failure_class: error?.failureClass || null,
+        ui_evidence_discarded: uiEvidenceDiscarded,
+      });
       tabs.delete(tabKey);
       await closeTab(tab);
       // Web transport and extraction failures are provider-local for this request;

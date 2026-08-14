@@ -30,6 +30,7 @@ const SHORT_COMPOSER_SETTLE_MS = 20_000;
 const LONG_COMPOSER_SETTLE_MS = 120_000;
 const POST_FILL_STRENGTH_RETRY_MS = 10_000;
 const NEW_CHAT_LABELS = ['新聊天', 'New chat'];
+const CHATGPT_STOP_GENERATION_LABELS = ['停止回答', 'Stop generating', 'Stop generating response'];
 
 const CHATGPT_TWO_STEP_MIN_CHARS = 4_000;
 const CONTEXT_SECTION_HEADERS = ['CODE_CONTEXT', 'DOCUMENT_CONTEXT', 'ADDITIONAL_CONTEXT'];
@@ -487,7 +488,7 @@ function splitChatGptContext(promptText) {
   };
 }
 
-async function submitChatGptComposer({ tab, provider, uiEvidence, input, text }) {
+async function submitChatGptComposer({ tab, provider, uiEvidence, input, text, onSendStarted }) {
   const composerSettleTimeout = chatGptComposerSettleTimeout(text.length);
   await runChatGptStageWithRecovery({
     tab,
@@ -552,39 +553,40 @@ async function submitChatGptComposer({ tab, provider, uiEvidence, input, text })
       }
     },
   });
+  // A browser click can time out after the event has already reached ChatGPT.
+  // Mark the request before dispatch and reconcile through the response watcher;
+  // never turn an ambiguous click into a blind second send.
+  if (typeof onSendStarted === 'function') onSendStarted();
   try {
     await send.click({ timeoutMs: 30_000 });
   } catch (error) {
-    if (await recoverRateLimitAfterSubmit({ tab })) return reasoning;
-    await unavailableWithEvidence({
-      tab,
-      message: 'ChatGPT send control is unavailable: ' + String(error?.message || error).slice(0, 180),
-      stage: 'submit',
-      provider,
-      uiEvidence,
-      names: ['发送提示', '与 ChatGPT 聊天', ...STRENGTH_TRIGGER_LABELS],
-    });
+    // The click outcome is ambiguous. A successful user message/assistant turn
+    // observed by waitForNextAssistantAnswer is the only authority after this
+    // point. Recover a visible rate-limit dialog, but never click send again.
+    await recoverRateLimitAfterSubmit({ tab });
   }
   return reasoning;
 }
 
-async function locateNewAssistantAnswer({ tab, previousGroupCount }) {
+export async function locateNewAssistantAnswer({ tab, previousGroupCount, timeoutMs = 180_000, pollMs = 300, checkInterrupted }) {
   const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (typeof checkInterrupted === 'function') await checkInterrupted();
     const count = await assistantGroups.count();
     if (count > previousGroupCount) return assistantGroups.nth(count - 1);
-    await tab.playwright.waitForTimeout(300);
+    await tab.playwright.waitForTimeout(Math.min(pollMs, Math.max(1, deadline - Date.now())));
   }
-  return tab.playwright.getByRole('main').getByText(/.+/).last();
+  throw new Error('ChatGPT did not create a new assistant message for this request');
 }
 
-async function waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs, checkInterrupted }) {
-  const answer = await locateNewAssistantAnswer({ tab, previousGroupCount });
+export async function waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs, checkInterrupted }) {
+  const startedAt = Date.now();
+  const answer = await locateNewAssistantAnswer({ tab, previousGroupCount, timeoutMs, checkInterrupted });
   return waitForAssistantAnswer({
     answer,
-    stopButtons: [tab.playwright.getByRole('button', { name: '停止回答', exact: true })],
-    timeoutMs,
+    stopButtons: CHATGPT_STOP_GENERATION_LABELS.map(name => tab.playwright.getByRole('button', { name, exact: true })),
+    timeoutMs: Math.max(1_000, timeoutMs - (Date.now() - startedAt)),
     checkInterrupted,
   });
 }
@@ -609,6 +611,8 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
 
   const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');
   let previousGroupCount = await assistantGroups.count();
+  let sendStarted = false;
+  let answerRateLimitRecoveries = 0;
   const input = await runChatGptStageWithRecovery({ tab, action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'pre_submit_recovery' }) });
   const attachmentState = imagePaths.length
     ? await pasteProviderImages({ tab, provider: 'ChatGPT', imagePaths, composer: input })
@@ -616,6 +620,17 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
 
   const checkInterrupted = async () => {
     if (!await locatorVisible(rateLimitDialog(tab))) return;
+    if (sendStarted) {
+      if (answerRateLimitRecoveries < CHATGPT_STAGE_RECOVERY_RETRIES) {
+        answerRateLimitRecoveries += 1;
+        await recoverRateLimit({ tab });
+      }
+      // After dispatch, a rate-limit dialog can coexist with the response that
+      // is already being rendered. Dismiss it when possible, but do not turn an
+      // unacknowledgeable dialog into an immediate fallback; the request-level
+      // assistant watcher is the authority and will accept the new answer.
+      return;
+    }
     await unavailableWithEvidence({
       tab,
       message: 'ChatGPT rate-limit popup interrupted answer wait',
@@ -626,29 +641,54 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
     });
   };
 
-  const { promptRemoved } = await submitPromptFromFile({
-    promptPath,
-    submit: async promptText => {
-      const split = splitChatGptContext(promptText);
-      const useTwoStep = Boolean(split.context) && promptText.length >= CHATGPT_TWO_STEP_MIN_CHARS;
-      if (useTwoStep) {
-        selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.context });
-        await runChatGptStageWithRecovery({
-          tab,
-          action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs: Math.min(timeoutMs, 120_000), checkInterrupted }),
-        });
-        previousGroupCount = await assistantGroups.count();
-        selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.instruction });
-      } else {
-        selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: promptText });
-      }
-    },
-  });
+  const markPostSendFailure = error => {
+    if (sendStarted) {
+      error.cacheFailure = false;
+      error.sendStarted = true;
+      error.failureClass = 'post_send_response_unconfirmed';
+    }
+    return error;
+  };
+  const markSendStarted = () => {
+    sendStarted = true;
+    answerRateLimitRecoveries = 0;
+  };
 
-  const text = await runChatGptStageWithRecovery({
-    tab,
-    action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs, checkInterrupted }),
-  });
+  let promptRemoved;
+  try {
+    ({ promptRemoved } = await submitPromptFromFile({
+      promptPath,
+      submit: async promptText => {
+        const split = splitChatGptContext(promptText);
+        const useTwoStep = Boolean(split.context) && promptText.length >= CHATGPT_TWO_STEP_MIN_CHARS;
+        if (useTwoStep) {
+          selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.context, onSendStarted: markSendStarted });
+          await runChatGptStageWithRecovery({
+            tab,
+            action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs: Math.min(timeoutMs, 120_000), checkInterrupted }),
+          });
+          previousGroupCount = await assistantGroups.count();
+          selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.instruction, onSendStarted: markSendStarted });
+        } else {
+          selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: promptText, onSendStarted: markSendStarted });
+        }
+      },
+    }));
+  } catch (error) {
+    throw markPostSendFailure(error);
+  }
+
+  let text;
+  try {
+    text = await runChatGptStageWithRecovery({
+      tab,
+      action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs, checkInterrupted }),
+    });
+  } catch (error) {
+    // Once any send was dispatched, this is not a provider-availability fact.
+    // Avoid poisoning the health cache and causing repeated false fallbacks.
+    throw markPostSendFailure(error);
+  }
 
   return {
     provider: 'ChatGPT',
@@ -657,6 +697,8 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
     reasoningLabel: selectedReasoning.label,
     reasoningSelectionSource: selectedReasoning.selectionSource,
     modelVerified: selectedReasoning.modelVerified,
+    responseConfirmed: true,
+    responseConfirmation: 'new_assistant_message',
     promptRemoved,
     attachmentsReady: imagePaths.length > 0 ? attachmentState.ready : null,
     answer: text,

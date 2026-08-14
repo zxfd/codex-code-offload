@@ -70,6 +70,14 @@ adapter/   本地打包与安全边界 Adapter（codex-agentchat-offload.mjs + p
 config/    全局 AGENTS.md 路由片段
 install.sh  一键安装（软链 + npm install）
 uninstall.sh 卸载（仅移除软链与状态目录，不改动仓库文件）
+
+## ChatGPT 响应确认
+
+ChatGPT 的发送和回答确认是同一个请求闭环：adapter 会记录发送前 assistant 消息数量，只接受发送后新增的 assistant 消息，并等待该消息稳定完成。发送按钮出现超时等“结果不确定”的情况会继续观察同一请求，绝不盲目重复发送；发送后的异常也不会写入负面健康缓存，避免一次浏览器状态抖动导致后续请求直接 fallback。回归测试可运行：
+
+```sh
+node --test skill/scripts/tests/chatgpt-response-confirmation.test.mjs
+```
 ```
 
 ## 安全边界（摘要）
