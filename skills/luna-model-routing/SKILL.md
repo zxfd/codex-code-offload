@@ -26,6 +26,14 @@ Use the current Luna task as the sole coordinator. Reuse the Codex App Thread co
 - The expected one-shot entry shape is `${HOME}/.codex/plugins/cache/openai-bundled/browser/<version>/scripts/browser-client.mjs`; verify the file exists before runtime use.
 - For repository workflows, use `skill/scripts/browser-client-entry.mjs` and retain the resolved absolute path in the route receipt.
 
+### Token-lean Spark handoff
+
+- For code-changing tasks, Spark is the single owner of source-level implementation context. Luna must not reread the complete original source set or redo the design after Spark returns.
+- Spark returns only a bounded receipt: `changed_files`, `diff_stat`, `artifact_ref` or worktree path, `tests_run`, `test_result`, `unresolved`, and one short implementation summary. Full source and full patch stay in the artifact/worktree.
+- Luna's acceptance pass is local and narrow: inspect the receipt, `git status --short`, `git diff --stat`, `git diff --check`, changed hunks, and the smallest relevant test output. This is integration evidence, not a second implementation analysis.
+- Do not create a second verifier or resend the original packet by default. Only send a bounded failure tail and the exact unresolved claim back to the same Spark Thread when local checks fail or a specific falsifiable risk remains.
+- If the receipt is complete and focused checks pass, mark it `verified` and integrate once; do not ask Spark to restate source or repeat passed tests.
+
 ## Route once, then communicate
 
 1. Estimate input size, modality, risk, expected output, and whether the task is `serial` or `parallel`.

@@ -16,10 +16,13 @@ scope: included files, symbols, evidence, or question
 authoritative_reads: facts already checked locally
 do_not_rescan: context that must not be reread without new evidence
 owned_paths: isolated write scope, or read-only
+context_policy: source_once | patch_only
 one_required_output: exact result or artifact expected
 acceptance_criteria: how Luna will verify the result
 constraints: no child Workers, no external actions, preserve user changes
 ```
+
+For Spark code work, add `context_policy: source_once | patch_only` to the packet and use `source_once`: Spark owns the source context, while Luna receives only the bounded receipt plus focused diff/test evidence. Do not paste the original source or packed prompt into Luna a second time.
 
 For a verifier packet, add only:
 
@@ -73,6 +76,10 @@ thread_id / host_id      # codex_thread or web_llm_thread
 request_id / provider    # browser_adapter or nested web_llm_thread
 output_ref
 verification
+changed_files
+diff_stat
+tests_run / test_result
+unresolved
 ```
 
 Use `model_source=codex_internal` for internal Threads and `model_source=web_provider` for Web-LLM. Keep `thread_id` and `request_id` distinct.
@@ -83,8 +90,8 @@ Use `model_source=codex_internal` for internal Threads and `model_source=web_pro
 2. For an internal route, use `codex_app__list_projects` when a workspace is needed, then `codex_app__create_thread` with the explicit model, thinking, packet, and project. For a parallel Web-LLM route, create one new Thread per branch and make the Browser Adapter the only reasoning source for that Thread.
 3. Luna sends exactly one primary packet unless a declared independent parallel split exists; use `codex_app__send_message_to_thread` for every internal or Web-LLM branch Thread.
 4. The transport returns a result and receipt; use `codex_app__read_thread` or `codex_app__wait_threads` for Thread status/results, and preserve the nested Web-LLM `request_id` and Provider attempts.
-5. Luna performs focused local verification.
-6. Luna may ask the same internal Thread once or continue the same Web-LLM request within its configured limit.
+5. Luna performs focused local verification from the bounded receipt and changed hunks; it does not repeat the original source analysis.
+6. Luna may ask the same internal Thread once only for a concrete failed check or unresolved falsifiable claim, sending the minimum failure tail and claim; never resend the complete packet by default.
 7. Luna applies the route matrix fallback, preserving the same `route_id` and incrementing `attempt`.
 8. Luna accepts or blocks the route, then edits/tests/ships from the current task. Archive an accepted internal or Web-LLM workflow Thread only after verification with `codex_app__set_thread_archived`.
 

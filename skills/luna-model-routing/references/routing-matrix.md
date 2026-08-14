@@ -13,6 +13,8 @@ Luna makes the decision. The matrix chooses a primary route; it is not a command
 | Image, screenshot, visual OCR, layout, chart, or pixel-dependent meaning | `browser_adapter` or `web_llm_thread` for a parallel branch | Provider configured | Do not send to text-only internal models. |
 | Internal context exceeds safe verified budget or external independent opinion is required | `browser_adapter` or `web_llm_thread` for a parallel branch | Provider configured | Keep large raw context out of Luna. |
 
+For Spark coding routes, treat implementation source as single-owner context: Spark reads and changes the code; Luna receives a bounded receipt and validates only the diff and targeted checks. A second full analysis is not an acceptance step.
+
 ## Fallbacks
 
 Use a single direction and record every transition:
