@@ -38,12 +38,14 @@ For Web-LLM, the local adapter remains responsible for literal path validation, 
 
 For a URL-only Web-LLM request that requires a fresh Chrome tab, Luna must enforce:
 
+- run the installed-skill health check (`skills/luna-model-routing/scripts/health-check.mjs`) against `/Users/gin/.agents/skills/luna-model-routing` first;
+- if the health check fails, return `blocked` and do not open Chrome for this branch;
 - pre-ingest with `url_preingest` using `allowExternalTransfer: false` as the default;
 - explicit user approval before any external transfer;
 - re-invocation with `allowExternalTransfer: true` only when approval is granted;
 - one named external provider execution path per approval attempt.
 
-For a URL-only Web-LLM request that must open a new Chrome tab, Luna inserts one mandatory local pre-step: run `ingestSingleUrlWithLocalContext` and record the bounded pre-ingest receipt before any provider call. This receipt is the only Browser-facing handoff input.
+For a URL-only Web-LLM request that must open a new Chrome tab, Luna inserts one mandatory local pre-step after a passing health check: run `ingestSingleUrlWithLocalContext` and record the bounded pre-ingest receipt before any provider call. This receipt is the only Browser-facing handoff input.
 
 ## Transport mapping
 
@@ -100,6 +102,8 @@ Use `model_source=codex_internal` for internal Threads and `model_source=web_pro
 2. For an internal route, use `codex_app__list_projects` when a workspace is needed, then `codex_app__create_thread` with the explicit model, thinking, packet, and project. For a parallel Web-LLM route, create one new Thread per branch and make the Browser Adapter the only reasoning source for that Thread.
 3. Luna sends exactly one primary packet unless a declared independent parallel split exists; use `codex_app__send_message_to_thread` for every internal or Web-LLM branch Thread.
 4. If the route is URL-based and requires a new Chrome tab, run the `url_preingest` step before provider work:
+   - first run the installed-skill health check at `/Users/gin/.agents/skills/luna-model-routing` from `skills/luna-model-routing/scripts/health-check.mjs`;
+   - if the health check fails, return `status: blocked/failed` and stop this branch before opening Chrome;
    - `status: blocked/failed` -> treat as terminal for this step and request approval or stop;
    - `status: requires_user_approval` -> request explicit user approval and do not continue automatically;
    - `status: completed` -> proceed to Web-LLM provider transport using the same Luna-owned bounded `provider` contract only; `ingestSingleUrlWithLocalContext` keeps temporary prompts/images internally.

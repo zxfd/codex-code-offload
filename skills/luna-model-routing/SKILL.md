@@ -95,6 +95,9 @@ For `execution_mode: parallel`, every independent branch starts with its own Web
 
 For any fresh Luna task that is based on one explicit user-approved `http`/`https` URL and requires opening a new Chrome tab:
 
+- first run a lightweight installed-skill health probe via `scripts/health-check.mjs` against `/Users/gin/.agents/skills/luna-model-routing`; if it fails, return `blocked` and stop this route branch;
+- must be fail-closed: a failed health check must not open any Chrome tab or call provider/browser APIs.
+- the health probe must run before opening the new Chrome tab and before all `ingestSingleUrlWithLocalContext` calls.
 - run the generic pre-ingestion helper first: `ingestSingleUrlWithLocalContext` from `skill/scripts/web-ingest.mjs`;
 - treat it as mandatory and never replace it with ad-hoc DOM/text/screenshot extraction in this route;
 - keep the accepted processing-policy shape to only these fields:

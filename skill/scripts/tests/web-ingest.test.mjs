@@ -64,6 +64,13 @@ test('Luna routing skill contract: mandatory single-URL pre-ingest and approved 
     'allowExternalTransfer: true',
     'missing approval+reinvoke flow',
   );
+  assertContains(SKILL_PATH, 'health check', 'missing installed-skill preflight health check requirement');
+  assertContains(SKILL_PATH, 'fail-closed', 'missing fail-closed health-check requirement');
+  assertContains(
+    CONTRACT_PATH,
+    'health check',
+    'missing communication-contract health-check precondition',
+  );
   assert.ok(
     /bounded receipt/i.test(skill),
     'missing bounded receipt language in skill contract',
