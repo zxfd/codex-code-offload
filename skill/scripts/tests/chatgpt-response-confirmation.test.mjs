@@ -6,7 +6,7 @@ import {
   locateNewAssistantAnswer,
   waitForNextAssistantAnswer,
 } from '../providers/chatgpt-web.mjs';
-import { isCoolingDown } from '../web-provider-runner.mjs';
+import { assertChromeBrowser, isCoolingDown } from '../web-provider-runner.mjs';
 
 function makeAnswer(text) {
   return {
@@ -37,16 +37,21 @@ function makeTab(counts, answer = makeAnswer('PROVIDER_OK:ChatGPT')) {
   };
 }
 
-function makeArchiveTab({ listed = false, historyBlocked = false } = {}) {
+function makeArchiveTab({ listed = false, dismissibleRateLimit = false, unresolvedRateLimit = false } = {}) {
   const events = [];
-  const locator = ({ visible = true, onClick = async () => {}, href = null } = {}) => ({
-    async count() { return visible ? 1 : 0; },
+  let archiveMenuVisible = false;
+  let dialogVisible = dismissibleRateLimit || unresolvedRateLimit;
+  const locator = ({ visible = true, onClick = async () => {}, href = null } = {}) => {
+    const isVisible = () => typeof visible === 'function' ? visible() : visible;
+    return {
+    async count() { return isVisible() ? 1 : 0; },
     first() { return this; },
     nth() { return this; },
-    async isVisible() { return visible; },
+    async isVisible() { return isVisible(); },
     async click() { events.push('click'); await onClick(); },
     async getAttribute(name) { return name === 'href' ? href : null; },
-  });
+    };
+  };
   const tab = {
     events,
     reloads: 0,
@@ -54,12 +59,29 @@ function makeArchiveTab({ listed = false, historyBlocked = false } = {}) {
     async reload() { this.reloads += 1; events.push('reload'); },
     playwright: {
       getByRole(role, options = {}) {
-        if (role === 'button' && options.name === '更多') return locator();
-        if (role === 'menuitem' && options.name === '归档') return locator();
-        if (role === 'dialog' && historyBlocked) {
+        if (role === 'button' && options.name === '更多') {
+          return locator({
+            visible: () => !dialogVisible,
+            onClick: async () => { archiveMenuVisible = true; },
+          });
+        }
+        if (role === 'menuitem' && options.name === '归档') {
+          return locator({
+            visible: () => archiveMenuVisible,
+            onClick: async () => { archiveMenuVisible = false; },
+          });
+        }
+        if (role === 'dialog' && dialogVisible) {
           return {
-            ...locator(),
-            getByRole() { return locator({ visible: false }); },
+            ...locator({ visible: () => dialogVisible }),
+            getByRole(dialogRole, dialogOptions = {}) {
+              const isAcknowledgement = dialogRole === 'button'
+                && ['好', '明白了', '确定', 'OK'].includes(dialogOptions.name);
+              return locator({
+                visible: () => isAcknowledgement && dismissibleRateLimit && dialogVisible,
+                onClick: async () => { dialogVisible = false; },
+              });
+            },
           };
         }
         if (role === 'dialog') return locator({ visible: false });
@@ -113,7 +135,7 @@ test('legacy negative health entries do not suppress ChatGPT', () => {
   }, 300_000, now), true);
 });
 
-test('ChatGPT archives the conversation and refreshes before cleanup completes', async () => {
+test('ChatGPT archives the conversation without refreshing before cleanup completes', async () => {
   const tab = makeArchiveTab();
   const cleanup = await archiveConversation({
     tab,
@@ -122,28 +144,49 @@ test('ChatGPT archives the conversation and refreshes before cleanup completes',
   assert.deepEqual(cleanup, {
     action: 'archive',
     confirmed: true,
-    verification: 'sidebar_link_absent_after_reload',
+    verification: 'sidebar_link_absent_without_reload',
   });
-  assert.equal(tab.reloads, 1);
-  assert.deepEqual(tab.events, ['click', 'click', 'reload']);
+  assert.equal(tab.reloads, 0);
+  assert.deepEqual(tab.events, ['click', 'click']);
 });
 
-test('ChatGPT archive cleanup rejects a conversation still listed after refresh', async () => {
+test('ChatGPT archive cleanup accepts the closed menu without refreshing', async () => {
+  const cleanup = await archiveConversation({
+    tab: makeArchiveTab({ listed: true }),
+    provider: { target: { model: 'GPT-5.6 Sol' } },
+  });
+  assert.equal(cleanup.verification, 'archive_menu_closed_without_reload');
+});
+
+test('ChatGPT archive cleanup dismisses a rate-limit dialog and retries', async () => {
+  const tab = makeArchiveTab({ dismissibleRateLimit: true });
+  const cleanup = await archiveConversation({
+    tab,
+    provider: { target: { model: 'GPT-5.6 Sol' } },
+  });
+  assert.equal(cleanup.confirmed, true);
+  assert.equal(tab.reloads, 0);
+  assert.deepEqual(tab.events, ['click', 'click', 'click']);
+});
+
+test('ChatGPT archive cleanup fails closed when the rate-limit dialog cannot close', async () => {
   await assert.rejects(
     archiveConversation({
-      tab: makeArchiveTab({ listed: true }),
+      tab: makeArchiveTab({ unresolvedRateLimit: true }),
       provider: { target: { model: 'GPT-5.6 Sol' } },
     }),
-    /conversation archive failed: conversation_archive_not_confirmed/,
+    /conversation archive failed: conversation_more_control_not_found/,
   );
 });
 
-test('ChatGPT archive cleanup rejects blocked history verification', async () => {
-  await assert.rejects(
-    archiveConversation({
-      tab: makeArchiveTab({ historyBlocked: true }),
-      provider: { target: { model: 'GPT-5.6 Sol' } },
-    }),
-    /conversation archive failed: conversation_archive_history_unavailable/,
+test('Web-LLM runner accepts only the user Chrome browser', () => {
+  assert.doesNotThrow(() => assertChromeBrowser({ tabs: { new: async () => {} } }, 'chrome'));
+  assert.throws(
+    () => assertChromeBrowser({ tabs: { new: async () => {} } }, 'iab'),
+    /requires the user Chrome extension browser/,
+  );
+  assert.throws(
+    () => assertChromeBrowser({ tabs: { new: async () => {} } }),
+    /requires the user Chrome extension browser/,
   );
 });

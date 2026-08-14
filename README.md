@@ -81,7 +81,7 @@ node --test skill/scripts/tests/chatgpt-response-confirmation.test.mjs
 
 ## ChatGPT 会话清理
 
-每轮 ChatGPT 对话在确认终局回答后，会先通过当前 Provider Adapter 点击“更多 → 归档”，刷新页面并核验侧边栏不再显示该会话，之后才关闭 Chrome 标签。归档失败时保留标签供恢复，不会把“已点击”误报成“已清理”；默认不执行不可逆的删除。
+每轮 ChatGPT 对话在确认终局回答后，会先关闭可能出现的“请求过于频繁”弹窗，再通过当前 Provider Adapter 点击“更多 → 归档”，不刷新页面，确认归档菜单已关闭后才关闭 Chrome 标签。调用 runner 时必须传入 `browserChannel: "chrome"`；归档失败时保留标签供恢复，默认不执行不可逆的删除。
 
 ## 安全边界（摘要）
 

@@ -33,7 +33,6 @@ const NEW_CHAT_LABELS = ['新聊天', 'New chat'];
 const CHATGPT_STOP_GENERATION_LABELS = ['停止回答', 'Stop generating', 'Stop generating response'];
 const CHATGPT_MORE_LABELS = ['更多', 'More'];
 const CHATGPT_ARCHIVE_LABELS = ['归档', 'Archive'];
-const CHATGPT_OPEN_SIDEBAR_LABELS = ['打开边栏', 'Open sidebar'];
 
 const CHATGPT_TWO_STEP_MIN_CHARS = 4_000;
 const CONTEXT_SECTION_HEADERS = ['CODE_CONTEXT', 'DOCUMENT_CONTEXT', 'ADDITIONAL_CONTEXT'];
@@ -619,16 +618,13 @@ async function findVisibleMenuItemByNames({ tab, names, message }) {
   throw new Error(`${message}: visible_matches=0`);
 }
 
-async function ensureConversationHistoryVisible({ tab }) {
-  const openSidebar = await firstVisibleNamedControl({
-    tab,
-    role: 'button',
-    names: CHATGPT_OPEN_SIDEBAR_LABELS,
-    message: 'ChatGPT sidebar control is ambiguous',
-  });
-  if (!openSidebar) return;
-  await openSidebar.locator.click({ timeoutMs: 30_000 });
-  await tab.playwright.waitForTimeout(300);
+async function recoverRateLimitBeforeArchive({ tab }) {
+  for (let retry = 0; retry < CHATGPT_STAGE_RECOVERY_RETRIES; retry += 1) {
+    const recovery = await recoverRateLimit({ tab });
+    if (!recovery.present || recovery.dismissed) return recovery;
+    await tab.playwright.waitForTimeout(250);
+  }
+  return { present: true, dismissed: false, acknowledgement: null };
 }
 
 export async function archiveConversation({ tab, provider, uiEvidence = false }) {
@@ -645,37 +641,39 @@ export async function archiveConversation({ tab, provider, uiEvidence = false })
   }
 
   try {
-    const more = await firstVisibleNamedControl({
+    await runChatGptStageWithRecovery({
       tab,
-      role: 'button',
-      names: CHATGPT_MORE_LABELS,
-      message: 'ChatGPT conversation menu is ambiguous',
+      action: async () => {
+        const more = await firstVisibleNamedControl({
+          tab,
+          role: 'button',
+          names: CHATGPT_MORE_LABELS,
+          message: 'ChatGPT conversation menu is ambiguous',
+        });
+        if (!more) throw new Error('conversation_more_control_not_found');
+        await more.locator.click({ timeoutMs: 30_000 });
+        const archive = await findVisibleMenuItemByNames({
+          tab,
+          names: CHATGPT_ARCHIVE_LABELS,
+          message: 'ChatGPT archive menu item is unavailable',
+        });
+        await archive.click({ timeoutMs: 30_000 });
+      },
     });
-    if (!more) throw new Error('conversation_more_control_not_found');
-    await more.locator.click({ timeoutMs: 30_000 });
-    const archive = await findVisibleMenuItemByNames({
-      tab,
-      names: CHATGPT_ARCHIVE_LABELS,
-      message: 'ChatGPT archive menu item is unavailable',
-    });
-    await archive.click({ timeoutMs: 30_000 });
 
-    // ChatGPT can leave the old sidebar entry visible until the page is
-    // refreshed. Refresh before closing so a successful click is not mistaken
-    // for a completed archive operation.
-    await tab.reload();
-    await tab.playwright.waitForLoadState({ state: 'domcontentloaded', timeoutMs: 30_000 });
-    await tab.playwright.waitForTimeout(500);
-    const rateLimitRecovery = await recoverRateLimit({ tab });
-    const historyBlocked = rateLimitRecovery.present && !rateLimitRecovery.dismissed;
-    if (historyBlocked) throw new Error('conversation_archive_history_unavailable');
-    await ensureConversationHistoryVisible({ tab });
+    // A rate-limit dialog can appear immediately after the archive click. It
+    // is safe to dismiss and continue; this path never reloads the page.
+    const rateLimitRecovery = await recoverRateLimitBeforeArchive({ tab });
+    if (rateLimitRecovery.present && !rateLimitRecovery.dismissed) {
+      throw new Error('conversation_archive_rate_limit_unresolved');
+    }
+    const archiveMenu = tab.playwright.getByRole('menuitem', { name: CHATGPT_ARCHIVE_LABELS[0], exact: true });
+    if (await locatorVisible(archiveMenu)) throw new Error('conversation_archive_menu_did_not_close');
     const stillListed = await conversationLinkIsVisible({ tab, pathname: currentUrl.pathname });
-    if (stillListed) throw new Error('conversation_archive_not_confirmed');
     return {
       action: 'archive',
       confirmed: true,
-      verification: 'sidebar_link_absent_after_reload',
+      verification: stillListed ? 'archive_menu_closed_without_reload' : 'sidebar_link_absent_without_reload',
     };
   } catch (error) {
     if (error?.code === 'PROVIDER_UNAVAILABLE') throw error;

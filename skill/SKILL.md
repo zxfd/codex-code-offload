@@ -61,7 +61,7 @@ Codex may first use `rg`, CodeGraph when indexed, symbols, import/export search,
 
 ## 3. Provider order and browser transport
 
-All providers run in connected Chrome by default, so automation rendering does not compete with the Codex app UI. Keep the Codex built-in Browser for manual use or a separately approved fallback; do not silently switch browser channels.
+All providers run in the user's connected Chrome extension by default, so automation rendering does not compete with the Codex app UI. Select it explicitly with `agent.browsers.get('chrome')`; never use `getForUrl()`, `getDefault()`, or the Codex built-in Browser for Web-LLM Provider requests. The runner requires the explicit `browserChannel: 'chrome'` marker, so a browser-channel mistake fails before a prompt is sent.
 
 Provider order is configured in:
 
@@ -103,7 +103,7 @@ It records only provider availability metadata; it never stores browser credenti
 
 ChatGPT send confirmation is request-scoped. The adapter snapshots the assistant-message count before each send and accepts only a newly created assistant message from that send; it never falls back to the last visible text in the conversation, because that may be an older answer or the user's message. A send click that times out is treated as ambiguous after dispatch: the adapter may dismiss a visible rate-limit dialog and continues watching the same request, but never clicks send again blindly. Failures after a send has started are not written as provider-unavailable health-cache entries, so one ambiguous browser event cannot suppress ChatGPT on subsequent requests.
 
-After a terminal ChatGPT answer is confirmed, the adapter archives that conversation before the runner closes the provider tab. It clicks the visible `更多`/`More` menu, then the exact `归档`/`Archive` menu item, refreshes the page, opens the sidebar if it is collapsed, and verifies that the conversation link is no longer present there. ChatGPT may briefly retain a stale sidebar entry after the archive click, so closing the tab before this refresh verification is not allowed. If history is temporarily blocked by a rate-limit dialog that cannot be dismissed, or the conversation remains listed after refresh, cleanup is treated as failed and the tab remains open for recovery; the adapter never reports a click-only action as confirmed. Delete is intentionally not the default because it is irreversible; archive satisfies the cleanup policy while preserving recovery.
+After a terminal ChatGPT answer is confirmed, the adapter archives that conversation before the runner closes the provider tab. It closes a visible `请求过于频繁`/`Too many requests` dialog using the existing acknowledgement recovery, retries the archive-menu step when the dialog interrupted it, then clicks the exact `归档`/`Archive` menu item. It does not reload the page; it confirms that the archive menu closed and records whether the sidebar link disappeared immediately. If the dialog cannot be dismissed or the archive menu does not close, cleanup is treated as failed and the tab remains open for recovery. Delete is intentionally not the default because it is irreversible; archive satisfies the cleanup policy while preserving recovery.
 
 When a prior Provider fails due to selector, exact-model, or recoverable UI-state ambiguity, the runner may capture a bounded semantic control artifact for local diagnostics only. It is deleted after the attempt and is never attached to any Provider prompt, so an external model cannot read page structure or decide the next browser action. Raw DOM, text nodes, innerHTML, browser storage, cookies, and user conversation content never enter Codex or the diagnostic artifact. This local diagnostic capture is opt-in with `uiEvidence: true`.
 
@@ -172,6 +172,7 @@ const { runProviderFallback } = await import(homedir() + '/.codex/skills/agentch
 globalThis.webReasoningTabs ??= new Map();
 const result = await runProviderFallback({
   browser: globalThis.chrome,
+  browserChannel: 'chrome',
   promptPath: '<BROWSER_PROMPT_FILE>',
   role: 'root_cause',
   requestMetadata: {

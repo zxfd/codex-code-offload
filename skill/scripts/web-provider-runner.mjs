@@ -170,6 +170,12 @@ export async function runWebProvider({ providerId, provider, tab, promptPath, ti
   return module.run({ providerId, provider, tab, promptPath, timeoutMs, continuation, uiEvidence, imagePaths });
 }
 
+export function assertChromeBrowser(browser, browserChannel) {
+  if (browserChannel !== 'chrome') {
+    throw new Error('ChatGPT Web-LLM requires the user Chrome extension browser');
+  }
+}
+
 async function cleanupWebProvider({ providerId, provider, tab, uiEvidence = false }) {
   const module = await importAdapter(provider.adapter);
   if (typeof module.archiveConversation !== 'function') return null;
@@ -178,6 +184,7 @@ async function cleanupWebProvider({ providerId, provider, tab, uiEvidence = fals
 
 export async function runProviderFallback({
   browser,
+  browserChannel,
   promptPath,
   role,
   requestMetadata = {},
@@ -189,6 +196,7 @@ export async function runProviderFallback({
   imagePaths = [],
 }) {
   if (!browser?.tabs?.new) throw new Error('a controlled Browser is required');
+  assertChromeBrowser(browser, browserChannel);
   const config = loadProviderConfig(configPath);
   const route = resolveProviderRoute(config, requestMetadata);
   const mediaFiles = validateImagePaths(imagePaths);
