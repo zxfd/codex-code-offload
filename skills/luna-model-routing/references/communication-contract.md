@@ -44,6 +44,14 @@ For Web-LLM, the local adapter remains responsible for literal path validation, 
 
 The transport value is part of the receipt and must never be inferred from the model name alone.
 
+For `browser_adapter` and `web_llm_thread`, validate the Browser Adapter entry once from the plugin cache. Use the repository helper when working in this project:
+
+```text
+${HOME}/.codex/plugins/cache/openai-bundled/browser/<version>/scripts/browser-client.mjs
+```
+
+Do not build this path from `.../skills/control-in-app-browser/...`; only use it after the resolved file is verified to exist for the active plugin version.
+
 ## Receipt
 
 Return or record at least:

@@ -6,8 +6,8 @@ Luna makes the decision. The matrix chooses a primary route; it is not a command
 
 | Condition | Primary route | Default thinking | Notes |
 |---|---|---|---|
-| Deterministic command, exact patch, test, formatter, metadata | `local_exec` | n/a | Never delegate merely because the task is long. |
-| Text-only bounded coding, low risk, speed-sensitive | `codex_thread` | Spark `medium` | Prefer Spark's separate extra quota when Luna has decided an internal Thread is worthwhile; quota alone does not justify delegation. |
+| Deterministic command, test, formatter, metadata-only operation | `local_exec` | n/a | Never delegate merely because the task is long. |
+| Text-only coding, implementation, or repair, including patch application and bounded refactors | `codex_thread` | Spark `medium` | Use Spark by default for code-modifying text work; escalate to `high` only for objective bounded checks. |
 | Text-only long logs/docs/source, triage or evidence extraction | `codex_thread` | V4 Flash `high` | Prefer for context-heavy, lower-risk synthesis. |
 | Text-only architecture, difficult root cause, security, high risk | `web_llm_thread` | Provider configured | This replaces the former V4 Pro primary route; Luna verifies before edits. |
 | Image, screenshot, visual OCR, layout, chart, or pixel-dependent meaning | `browser_adapter` or `web_llm_thread` for a parallel branch | Provider configured | Do not send to text-only internal models. |
@@ -42,7 +42,7 @@ When parallelism is justified and a branch selects Web-LLM, create one new Codex
 
 ## Reasoning guidance
 
-- Spark: `medium` default; `high` only for bounded coding with objective tests. Its separate extra quota makes it the preferred internal route for eligible low-risk text work, but never the final authority for high-risk decisions.
+- Spark: `medium` default; `high` only for bounded coding with objective checks. Its separate extra quota makes it the default internal route for eligible coding and repair tasks, but never the final authority for high-risk decisions.
 - V4 Flash: `low` for simple triage, `high` for long-text correlation.
 - V4 Pro: `high` for the normal paid fallback, `max` only when the error cost or reasoning depth warrants it; never select it before the branch's Web-LLM chain is exhausted.
 - Web-LLM: use the configured Provider model/strength policy; do not substitute an unconfigured model.

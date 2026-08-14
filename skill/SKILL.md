@@ -113,6 +113,8 @@ For every Provider, a first-round request uses its own new Chrome tab and must c
 
 DeepSeek's official service context window is 1M tokens, but its limit covers the combined input and generated output. The configured browser guard therefore reserves 350K tokens for reasoning/output and skips DeepSeek before opening the page when a deliberately conservative local estimate exceeds 650K input tokens. A skipped request records `input_token_budget` and continues to Qwen; it does not mark DeepSeek unhealthy.
 
+Because `深度思考` can take longer to finish, the DeepSeek Adapter resolves the answer wait budget after confirming the toggle: the configured 350K reserved-output profile allows up to 420 seconds, while other deep-thinking requests receive at least 300 seconds. The stop-generation control remains authoritative during this extended wait.
+
 ## 4. Start a LEVEL 1 request
 
 Select only relevant files and create the local pack. This command prints paths and counts, never packed source:
@@ -190,6 +192,24 @@ const result = await runProviderFallback({
 });
 nodeRepl.write(result);
 ```
+
+### Browser Adapter entry portability
+
+When documenting or wiring transport entry, resolve and validate the Browser Adapter with `skill/scripts/browser-client-entry.mjs`:
+
+```js
+import { resolveBrowserClientEntry } from '.../skill/scripts/browser-client-entry.mjs';
+
+const browserClientEntry = resolveBrowserClientEntry();
+```
+
+The verified entry shape is:
+
+```text
+${HOME}/.codex/plugins/cache/openai-bundled/browser/<version>/scripts/browser-client.mjs
+```
+
+Do not build this path by appending `skills/control-in-app-browser` to any Skill directory. If such a path is supplied by a caller, the helper corrects it back to the plugin cache root and still requires both `scripts/` and `skills/` in the version directory.
 
 The runner owns fallback and Provider UI detail. A first-round request always opens a new Chrome tab; its tab key is `request_id + provider`, so a shared `webReasoningTabs` map remains isolated across simultaneous coding tasks. Preserve the same `request_id` only for later context rounds of that same request, which then reuse their own Provider tab. Do not inspect provider DOM/source beyond what the provider adapter needs.
 

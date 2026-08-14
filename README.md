@@ -85,6 +85,8 @@ node --test skill/scripts/tests/chatgpt-response-confirmation.test.mjs
 
 DeepSeek 每次发送前还会确认“专家模式”和“深度思考”均已开启；任一控件无法确认，当前 Provider 失败并按既定路由继续。调用 runner 时必须传入 `browserChannel: "chrome"`。
 
+开启深度思考后，Adapter 会自动延长回答等待预算：350K 保留输出配置最长等待 420 秒，其他深度思考请求至少等待 300 秒，并继续以“停止回答”控件判断是否仍在生成。
+
 ## 安全边界（摘要）
 
 - Adapter 拒绝敏感路径、glob、仓库外路径与明显的凭证文本；只打包用户显式选择的仓库内文件。

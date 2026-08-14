@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { archiveConversation, runDeepSeekExpert } from '../deepseek-expert-browser.mjs';
+import {
+  archiveConversation,
+  runDeepSeekExpert,
+  resolveDeepSeekAnswerTimeout,
+} from '../deepseek-expert-browser.mjs';
 
 function visibleLocator({ visible = true, onClick = async () => {}, attribute = {}, fill = async () => {}, press = async () => {}, innerText = async () => '' } = {}) {
   const isNowVisible = () => typeof visible === 'function' ? visible() : visible;
@@ -125,6 +129,21 @@ test('DeepSeek enables expert mode and deep thinking before sending', async () =
   } finally {
     rmSync(promptDir, { recursive: true, force: true });
   }
+});
+
+test('DeepSeek extends wait timeout when deep-thinking is enabled', () => {
+  assert.equal(resolveDeepSeekAnswerTimeout({
+    provider: { target: { deep_thinking: true, reserved_output_tokens: 350_000 } },
+    timeoutMs: 180_000,
+  }), 420_000);
+  assert.equal(resolveDeepSeekAnswerTimeout({
+    provider: { target: { deep_thinking: true, reserved_output_tokens: 180_000 } },
+    timeoutMs: 180_000,
+  }), 300_000);
+  assert.equal(resolveDeepSeekAnswerTimeout({
+    provider: { target: { deep_thinking: false, reserved_output_tokens: 350_000 } },
+    timeoutMs: 180_000,
+  }), 180_000);
 });
 
 test('DeepSeek deletes the terminal conversation before the tab is closed', async () => {

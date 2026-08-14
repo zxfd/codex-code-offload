@@ -11,6 +11,23 @@ const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
 const DEEPSEEK_CONVERSATION_PATH_PREFIX = '/a/chat/s/';
 const DEEPSEEK_DELETE_LABEL = '删除';
 const DEEPSEEK_DELETE_CONFIRM_LABEL = '删除该对话';
+const DEEPSEEK_DEEP_THINKING_DEFAULT_TIMEOUT_MS = 180_000;
+const DEEPSEEK_DEEP_THINKING_EXTENDED_TIMEOUT_MS = 420_000;
+
+export function resolveDeepSeekAnswerTimeout({
+  provider,
+  timeoutMs = DEEPSEEK_DEEP_THINKING_DEFAULT_TIMEOUT_MS,
+  defaultTimeoutMs = DEEPSEEK_DEEP_THINKING_DEFAULT_TIMEOUT_MS,
+} = {}) {
+  const baseTimeoutMs = Number(timeoutMs);
+  if (!Number.isFinite(baseTimeoutMs) || baseTimeoutMs <= 0) return defaultTimeoutMs;
+  if (provider?.target?.deep_thinking !== true) return baseTimeoutMs;
+  const reservedOutputTokens = Number(provider?.target?.reserved_output_tokens);
+  if (Number.isFinite(reservedOutputTokens) && reservedOutputTokens >= 300_000) {
+    return DEEPSEEK_DEEP_THINKING_EXTENDED_TIMEOUT_MS;
+  }
+  return Math.max(baseTimeoutMs, DEEPSEEK_DEEP_THINKING_DEFAULT_TIMEOUT_MS + 120_000);
+}
 
 async function hasVisibleConversationMessages(tab) {
   const messages = tab.playwright.locator(`${ASSISTANT_SELECTOR}, [data-message-author-role="user"]`);
@@ -125,10 +142,11 @@ export async function runDeepSeekExpert({ provider, tab, promptPath, timeoutMs =
     },
   });
   const answer = answers.nth(previousAnswerCount);
+  const resolvedTimeoutMs = resolveDeepSeekAnswerTimeout({ provider, timeoutMs });
   const text = await waitForAssistantAnswer({
     answer,
     stopButtons: [tab.playwright.getByRole('button', { name: /停止|Stop/i })],
-    timeoutMs,
+    timeoutMs: resolvedTimeoutMs,
   });
   return {
     provider: 'DeepSeek',

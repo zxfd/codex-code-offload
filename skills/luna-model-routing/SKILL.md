@@ -10,23 +10,31 @@ Use the current Luna task as the sole coordinator. Reuse the Codex App Thread co
 ## Invariants
 
 - Keep the main Agent on `gpt-5.6-luna` when this Skill is active. Do not silently switch the main Agent.
-- Luna owns classification, model selection, task packets, fallback decisions, integration, verification, edits, tests, and delivery.
-- Spark has a separate extra quota. When Luna has already decided that a bounded internal Thread is worthwhile, prefer Spark for eligible low-risk text work before spending Web-LLM capacity; quota alone is never a reason to delegate deterministic work.
+- Luna owns classification, model selection, task packets, fallback decisions, verification, integration, and delivery. Direct code edits are not the default role in Luna.
+- For any coding, implementation, or code-repair scope—including patch application, refactors, and deterministic edits—create a `codex_thread` with `gpt-5.3-codex-spark` first (`medium`), then escalate to `high` only for bounded objective checks.
+- Keep deterministic local work (`commands`, `tests`, formatting, metadata, hashes, and direct reads) in `local_exec`; do not use this exception for code edits.
+- Spark has a separate extra quota and is the default internal route for coding/repair work; quota alone is never a reason to delegate deterministic non-code work.
 - Use Codex App Threads for internal models: `gpt-5.3-codex-spark`, `deepseek-v4-flash-deepseek`, and `deepseek-v4-pro-deepseek`.
 - Use the existing `agentchat-code-offload` Browser Adapter for Web-LLM. A Web-LLM Thread is only a Codex App communication/workflow shell; its answer source remains the Browser Adapter Provider, never the Thread's Codex model, and internal models do not enter `providers.json`.
 - Web-LLM is primary for the architecture, difficult-root-cause, security-sensitive, and other tasks that the old routing would have sent directly to V4 Pro. V4 Pro is a paid fallback only.
 - Workers do not create more Workers, publish, send, delete, pay, change accounts, or perform production actions.
 - Treat every Worker and Web-LLM answer as evidence. Luna must verify it against local facts before edits or execution.
 
+### Browser Adapter entry resolution
+
+- Resolve the Browser Adapter entry from the plugin cache root, not by appending `skills/control-in-app-browser` to any Skill directory.
+- The expected one-shot entry shape is `${HOME}/.codex/plugins/cache/openai-bundled/browser/<version>/scripts/browser-client.mjs`; verify the file exists before runtime use.
+- For repository workflows, use `skill/scripts/browser-client-entry.mjs` and retain the resolved absolute path in the route receipt.
+
 ## Route once, then communicate
 
 1. Estimate input size, modality, risk, expected output, and whether the task is `serial` or `parallel`.
-2. Keep deterministic work in the current Luna task: commands, tests, formatting, exact patches, metadata, hashes, and direct lookups.
+2. Keep deterministic work in the current Luna task: commands, tests, formatting, metadata, hashes, and direct reads; code changes go through the designated Spark Thread.
 3. Select one primary route from [routing-matrix.md](references/routing-matrix.md). Do not call every model as a panel.
 4. Build the packet and receipt fields from [communication-contract.md](references/communication-contract.md).
 5. For an internal route, use the Codex App Thread lifecycle. For Web-LLM, use the fixed Browser Adapter lifecycle; when the task is parallel, create one new Codex App Thread per independent Web-LLM branch and run that branch's Provider chain inside it.
 6. Read the result into the current Luna task, verify focused claims locally, and decide whether to accept, ask once, fall back, or stop.
-7. Make changes and run tests from the current Luna task. A Worker may prepare a patch in its owned scope, but Luna owns final integration.
+7. Make code changes in the designated Spark Thread; Luna applies or integrates the returned patch only after focused local verification and runs the tests from the current task.
 
 ## Internal Thread transport
 
