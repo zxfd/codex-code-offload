@@ -1,6 +1,6 @@
 ---
 name: luna-model-routing
-description: Coordinate free-first task routing from a fixed GPT-5.6-Luna main Agent to Web-LLM through Codex App Threads, with GPT-5.3-Codex-Spark, DeepSeek V4 Flash, and DeepSeek V4 Pro as explicit internal routes. Use when a task needs model selection, cross-model communication, Web-LLM offload, unified task receipts, or the serial/parallel-branch Web-LLM-to-V4-Pro fallback.
+description: Coordinate free-first task routing from a fixed GPT-5.6-Luna main Agent to Web-LLM through Codex App Threads, with Luna Max, DeepSeek V4 Flash, and DeepSeek V4 Pro as explicit routes. Use when a task needs model selection, cross-model communication, Web-LLM offload, unified task receipts, or the serial/parallel-branch Web-LLM-to-V4-Pro fallback.
 ---
 
 # Luna Model Routing
@@ -10,11 +10,11 @@ Use the current Luna task as the sole coordinator. Reuse the Codex App Thread co
 ## Invariants
 
 - Keep the main Agent on `gpt-5.6-luna` when this Skill is active. Do not silently switch the main Agent.
-- Luna owns classification, model selection, task packets, fallback decisions, verification, integration, and delivery. Direct code edits are not the default role in Luna.
-- For any coding, implementation, or code-repair scope—including patch application, refactors, and deterministic edits—create a `codex_thread` with `gpt-5.3-codex-spark` first (`xhigh`), Spark's maximum supported level.
+- Luna owns classification, model selection, task packets, fallback decisions, implementation, verification, integration, and delivery. For code-changing scope, use Luna Max in the current task.
+- For any coding, implementation, or code-repair scope—including patch application, refactors, and deterministic edits—keep the work in the current `gpt-5.6-luna` task at `max`; do not create a coding Worker Thread.
 - Keep deterministic local work (`commands`, `tests`, formatting, metadata, hashes, and direct reads) in `local_exec`; do not use this exception for code edits.
-- Spark has a separate extra quota and is the default internal route for coding/repair work; quota alone is never a reason to delegate deterministic non-code work.
-- Use Codex App Threads for internal models: `gpt-5.3-codex-spark`, `deepseek-v4-flash-deepseek`, and `deepseek-v4-pro-deepseek`.
+- Luna Max is the default owner for coding and repair work; quota alone is never a reason to delegate deterministic non-code work.
+- Use Codex App Threads for the remaining internal models: `deepseek-v4-flash-deepseek` and `deepseek-v4-pro-deepseek`.
 - Use the existing `agentchat-code-offload` Browser Adapter for Web-LLM. A Web-LLM Thread is only a Codex App communication/workflow shell; its answer source remains the Browser Adapter Provider, never the Thread's Codex model, and internal models do not enter `providers.json`.
 - Web-LLM is primary for the architecture, difficult-root-cause, security-sensitive, and other tasks that the old routing would have sent directly to V4 Pro. V4 Pro is a paid fallback only.
 - Workers do not create more Workers, publish, send, delete, pay, change accounts, or perform production actions.
@@ -26,23 +26,23 @@ Use the current Luna task as the sole coordinator. Reuse the Codex App Thread co
 - The expected one-shot entry shape is `${HOME}/.codex/plugins/cache/openai-bundled/browser/<version>/scripts/browser-client.mjs`; verify the file exists before runtime use.
 - For repository workflows, use `skill/scripts/browser-client-entry.mjs` and retain the resolved absolute path in the route receipt.
 
-### Token-lean Spark handoff
+### Token-lean Luna Max implementation
 
-- For code-changing tasks, Spark is the single owner of source-level implementation context. Luna must not reread the complete original source set or redo the design after Spark returns.
-- Spark returns only a bounded receipt: `changed_files`, `diff_stat`, `artifact_ref` or worktree path, `tests_run`, `test_result`, `unresolved`, and one short implementation summary. Full source and full patch stay in the artifact/worktree.
-- Luna's acceptance pass is local and narrow: inspect the receipt, `git status --short`, `git diff --stat`, `git diff --check`, changed hunks, and the smallest relevant test output. This is integration evidence, not a second implementation analysis.
-- Do not create a second verifier or resend the original packet by default. Only send a bounded failure tail and the exact unresolved claim back to the same Spark Thread when local checks fail or a specific falsifiable risk remains.
-- If the receipt is complete and focused checks pass, mark it `verified` and integrate once; do not ask Spark to restate source or repeat passed tests.
+- For code-changing tasks, Luna Max is the single owner of the source-level implementation context and makes the edit in the current task.
+- Record a bounded local implementation receipt: `changed_files`, `diff_stat`, `tests_run`, `test_result`, `unresolved`, and one short implementation summary. Keep full source and patch in the repository artifact.
+- Luna's acceptance pass remains narrow: inspect `git status --short`, `git diff --stat`, `git diff --check`, changed hunks, and the smallest relevant test output. This is integration evidence, not a second implementation analysis.
+- Do not create a second verifier or repeat the original source analysis by default. Only use a focused verifier when local checks fail or a specific falsifiable risk remains.
+- If focused checks pass, mark the local implementation `verified` and integrate once.
 
 ## Route once, then communicate
 
 1. Estimate input size, modality, risk, expected output, and whether the task is `serial` or `parallel`.
-2. Keep deterministic work in the current Luna task: commands, tests, formatting, metadata, hashes, and direct reads; code changes go through the designated Spark Thread.
+2. Keep deterministic work in the current Luna task: commands, tests, formatting, metadata, hashes, and direct reads; Luna Max makes code changes in that same task.
 3. Select one primary route from [routing-matrix.md](references/routing-matrix.md). Do not call every model as a panel.
 4. Build the packet and receipt fields from [communication-contract.md](references/communication-contract.md).
 5. For an internal route, use the Codex App Thread lifecycle. For Web-LLM, use the fixed Browser Adapter lifecycle; when the task is parallel, create one new Codex App Thread per independent Web-LLM branch and run that branch's Provider chain inside it.
 6. Read the result into the current Luna task, verify focused claims locally, and decide whether to accept, ask once, fall back, or stop.
-7. Make code changes in the designated Spark Thread; Luna applies or integrates the returned patch only after focused local verification and runs the tests from the current task.
+7. Make code changes with Luna Max in the current task, perform focused local verification, and run the relevant tests there.
 
 ## Internal Thread transport
 
@@ -56,9 +56,9 @@ Use the Codex App model-Thread tools, not native `spawn_agent`: `codex_app__list
 6. If the result is directionally useful but incomplete, ask once in the original Thread. Do not silently repack the task as a new model call.
 7. Luna verifies the result and marks `verification_state` before accepting it.
 
-Use these internal model roles:
+Use these model roles:
 
-- Spark: fast, text-only, low-risk coding or bounded verification. Use `xhigh` as the route default.
+- Luna Max: current-task, text-only coding, implementation, repair, and bounded verification. Use `max` as the route default for code-changing work.
 - V4 Flash: fast, text-only long-context triage, log correlation, document/source summarization, and evidence extraction.
 - V4 Pro: text-only paid fallback for a serial task or parallel branch whose entire eligible Web-LLM Provider chain has failed. It is not a primary route for Pro-class reasoning.
 

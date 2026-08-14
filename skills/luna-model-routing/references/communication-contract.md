@@ -22,7 +22,7 @@ acceptance_criteria: how Luna will verify the result
 constraints: no child Workers, no external actions, preserve user changes
 ```
 
-For Spark code work, add `context_policy: source_once | patch_only` to the packet and use `source_once`: Spark owns the source context, while Luna receives only the bounded receipt plus focused diff/test evidence. Do not paste the original source or packed prompt into Luna a second time.
+For Luna Max code work, record `context_policy: source_once | patch_only` in the local implementation receipt and use `source_once`: Luna owns the source context in the current task, then verifies the bounded diff/test evidence without repeating the original analysis.
 
 For a verifier packet, add only:
 
@@ -51,8 +51,9 @@ For a URL-only Web-LLM request that must open a new Chrome tab, Luna inserts one
 
 | Transport | Recipient | Send mechanism | Continue mechanism | Result source |
 |---|---|---|---|---|
+| `current_luna` | current Luna Max task | current task | current task | local implementation receipt |
 | `local_exec` | current Luna task | local tool | current task | command/test/artifact |
-| `codex_thread` | Spark / V4 Flash / V4 Pro | Codex App Thread | original Thread message | Thread result |
+| `codex_thread` | V4 Flash / V4 Pro | Codex App Thread | original Thread message | Thread result |
 | `browser_adapter` | Web-LLM Provider | existing offload adapter | same `request_id`, bounded continuation | Provider answer |
 | `web_llm_thread` | one Web-LLM branch | new Codex App Thread wrapping the Browser Adapter | original Thread message plus same `request_id` | Browser Adapter receipt returned by that Thread |
 | `url_preingest` | `ingestSingleUrlWithLocalContext` | same Luna task | bounded `requires_user_approval` payload or `completed` pre-ingest result | bounded local receipt (`status`, `modality`, `pageSignals`, `externalTransfer`) |
@@ -99,7 +100,7 @@ Use `model_source=codex_internal` for internal Threads and `model_source=web_pro
 ## Lifecycle
 
 1. Luna creates the `route_id` and chooses `execution_mode`.
-2. For an internal route, use `codex_app__list_projects` when a workspace is needed, then `codex_app__create_thread` with the explicit model, thinking, packet, and project. For a parallel Web-LLM route, create one new Thread per branch and make the Browser Adapter the only reasoning source for that Thread.
+2. For a `current_luna` code route, implement in the current `gpt-5.6-luna` task at `max` and record the local implementation receipt. For another internal route, use `codex_app__list_projects` when a workspace is needed, then `codex_app__create_thread` with the explicit model, thinking, packet, and project. For a parallel Web-LLM route, create one new Thread per branch and make the Browser Adapter the only reasoning source for that Thread.
 3. Luna sends exactly one primary packet unless a declared independent parallel split exists; use `codex_app__send_message_to_thread` for every internal or Web-LLM branch Thread.
 4. If the route is URL-based and requires a new Chrome tab, run the `url_preingest` step before provider work:
    - first run the installed-skill health check at `/Users/gin/.agents/skills/luna-model-routing` from `skills/luna-model-routing/scripts/health-check.mjs`;

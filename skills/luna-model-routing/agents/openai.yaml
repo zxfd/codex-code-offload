@@ -1,4 +1,4 @@
 interface:
   display_name: "Luna 模型协作路由"
-  short_description: "Route Luna, Spark, DeepSeek V4, and Web-LLM"
-  default_prompt: "Use $luna-model-routing to route this task through Luna, Spark, DeepSeek V4, or Web-LLM."
+  short_description: "Route Luna Max, DeepSeek V4, and Web-LLM"
+  default_prompt: "Use $luna-model-routing to route this task through Luna Max, DeepSeek V4, or Web-LLM."
