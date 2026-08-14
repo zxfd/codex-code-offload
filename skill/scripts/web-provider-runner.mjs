@@ -170,6 +170,12 @@ export async function runWebProvider({ providerId, provider, tab, promptPath, ti
   return module.run({ providerId, provider, tab, promptPath, timeoutMs, continuation, uiEvidence, imagePaths });
 }
 
+async function cleanupWebProvider({ providerId, provider, tab, uiEvidence = false }) {
+  const module = await importAdapter(provider.adapter);
+  if (typeof module.archiveConversation !== 'function') return null;
+  return module.archiveConversation({ providerId, provider, tab, uiEvidence });
+}
+
 export async function runProviderFallback({
   browser,
   promptPath,
@@ -242,6 +248,18 @@ export async function runProviderFallback({
       health.providers[providerId] = { status: 'available', last_success: new Date().toISOString(), target_signature: providerSignature };
       writeHealth(stateDir, health);
       attempts.push({ provider: providerId, status: 'success' });
+      let conversationCleanup = null;
+      if (isTerminalAnswer(result.answer)) {
+        try {
+          conversationCleanup = await cleanupWebProvider({ providerId, provider, tab, uiEvidence });
+        } catch (error) {
+          error.cacheFailure = false;
+          error.keepTabOpen = true;
+          error.sendStarted = true;
+          error.failureClass = 'conversation_cleanup_failed';
+          throw error;
+        }
+      }
       const event = {
         timestamp: startedAt,
         request_id: requestId,
@@ -255,6 +273,9 @@ export async function runProviderFallback({
         image_count: mediaFiles.length,
         result_length: result.answer.length,
         response_confirmed: result.responseConfirmed === true,
+        conversation_cleanup: conversationCleanup?.action || null,
+        conversation_cleanup_confirmed: conversationCleanup?.confirmed === true,
+        conversation_cleanup_verification: conversationCleanup?.verification || null,
         success: true,
       };
       logEvent(stateDir, event);
@@ -268,6 +289,7 @@ export async function runProviderFallback({
         modality: route.modality,
         imageCount: mediaFiles.length,
         providerAttempts: attempts,
+        conversationCleanup,
         requestId,
       };
     } catch (error) {
@@ -309,14 +331,20 @@ export async function runProviderFallback({
       writeHealth(stateDir, health);
       attempts.push({
         provider: providerId,
-        status: cacheFailure ? 'unavailable' : 'ambiguous_post_send',
+        status: cacheFailure
+          ? 'unavailable'
+          : error?.failureClass === 'conversation_cleanup_failed'
+            ? 'conversation_cleanup_failed'
+            : 'ambiguous_post_send',
         reason,
         send_started: error?.sendStarted === true,
         failure_class: error?.failureClass || null,
         ui_evidence_discarded: uiEvidenceDiscarded,
       });
-      tabs.delete(tabKey);
-      await closeTab(tab);
+      if (!error?.keepTabOpen) {
+        tabs.delete(tabKey);
+        await closeTab(tab);
+      }
       // Web transport and extraction failures are provider-local for this request;
       // record them and try the configured fallback rather than silently changing models.
     }

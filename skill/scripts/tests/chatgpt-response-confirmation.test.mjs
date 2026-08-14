@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  archiveConversation,
   locateNewAssistantAnswer,
   waitForNextAssistantAnswer,
 } from '../providers/chatgpt-web.mjs';
@@ -34,6 +35,45 @@ function makeTab(counts, answer = makeAnswer('PROVIDER_OK:ChatGPT')) {
       async waitForTimeout() {},
     },
   };
+}
+
+function makeArchiveTab({ listed = false, historyBlocked = false } = {}) {
+  const events = [];
+  const locator = ({ visible = true, onClick = async () => {}, href = null } = {}) => ({
+    async count() { return visible ? 1 : 0; },
+    first() { return this; },
+    nth() { return this; },
+    async isVisible() { return visible; },
+    async click() { events.push('click'); await onClick(); },
+    async getAttribute(name) { return name === 'href' ? href : null; },
+  });
+  const tab = {
+    events,
+    reloads: 0,
+    async url() { return 'https://chatgpt.com/c/test-conversation'; },
+    async reload() { this.reloads += 1; events.push('reload'); },
+    playwright: {
+      getByRole(role, options = {}) {
+        if (role === 'button' && options.name === '更多') return locator();
+        if (role === 'menuitem' && options.name === '归档') return locator();
+        if (role === 'dialog' && historyBlocked) {
+          return {
+            ...locator(),
+            getByRole() { return locator({ visible: false }); },
+          };
+        }
+        if (role === 'dialog') return locator({ visible: false });
+        return locator({ visible: false });
+      },
+      locator(selector) {
+        if (selector === 'a' && listed) return locator({ href: '/c/test-conversation' });
+        return locator({ visible: false });
+      },
+      async waitForTimeout() {},
+      async waitForLoadState() {},
+    },
+  };
+  return tab;
 }
 
 test('ChatGPT response confirmation rejects an old assistant message', async () => {
@@ -71,4 +111,39 @@ test('legacy negative health entries do not suppress ChatGPT', () => {
     target_signature: targetSignature,
     current_target_signature: targetSignature,
   }, 300_000, now), true);
+});
+
+test('ChatGPT archives the conversation and refreshes before cleanup completes', async () => {
+  const tab = makeArchiveTab();
+  const cleanup = await archiveConversation({
+    tab,
+    provider: { target: { model: 'GPT-5.6 Sol' } },
+  });
+  assert.deepEqual(cleanup, {
+    action: 'archive',
+    confirmed: true,
+    verification: 'sidebar_link_absent_after_reload',
+  });
+  assert.equal(tab.reloads, 1);
+  assert.deepEqual(tab.events, ['click', 'click', 'reload']);
+});
+
+test('ChatGPT archive cleanup rejects a conversation still listed after refresh', async () => {
+  await assert.rejects(
+    archiveConversation({
+      tab: makeArchiveTab({ listed: true }),
+      provider: { target: { model: 'GPT-5.6 Sol' } },
+    }),
+    /conversation archive failed: conversation_archive_not_confirmed/,
+  );
+});
+
+test('ChatGPT archive cleanup rejects blocked history verification', async () => {
+  await assert.rejects(
+    archiveConversation({
+      tab: makeArchiveTab({ historyBlocked: true }),
+      provider: { target: { model: 'GPT-5.6 Sol' } },
+    }),
+    /conversation archive failed: conversation_archive_history_unavailable/,
+  );
 });

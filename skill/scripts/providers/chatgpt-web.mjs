@@ -31,6 +31,9 @@ const LONG_COMPOSER_SETTLE_MS = 120_000;
 const POST_FILL_STRENGTH_RETRY_MS = 10_000;
 const NEW_CHAT_LABELS = ['新聊天', 'New chat'];
 const CHATGPT_STOP_GENERATION_LABELS = ['停止回答', 'Stop generating', 'Stop generating response'];
+const CHATGPT_MORE_LABELS = ['更多', 'More'];
+const CHATGPT_ARCHIVE_LABELS = ['归档', 'Archive'];
+const CHATGPT_OPEN_SIDEBAR_LABELS = ['打开边栏', 'Open sidebar'];
 
 const CHATGPT_TWO_STEP_MIN_CHARS = 4_000;
 const CONTEXT_SECTION_HEADERS = ['CODE_CONTEXT', 'DOCUMENT_CONTEXT', 'ADDITIONAL_CONTEXT'];
@@ -589,6 +592,102 @@ export async function waitForNextAssistantAnswer({ tab, previousGroupCount, time
     timeoutMs: Math.max(1_000, timeoutMs - (Date.now() - startedAt)),
     checkInterrupted,
   });
+}
+
+async function conversationLinkIsVisible({ tab, pathname }) {
+  const links = tab.playwright.locator('a');
+  for (let index = 0; index < await links.count(); index += 1) {
+    const link = links.nth(index);
+    if (!await locatorVisible(link)) continue;
+    const href = await link.getAttribute('href', { timeoutMs: 5_000 });
+    if (href === pathname || href === `https://chatgpt.com${pathname}`) return true;
+  }
+  return false;
+}
+
+async function findVisibleMenuItemByNames({ tab, names, message }) {
+  for (const name of names) {
+    const locator = tab.playwright.getByRole('menuitem', { name, exact: true });
+    const visible = [];
+    for (let index = 0; index < await locator.count(); index += 1) {
+      const candidate = locator.nth(index);
+      if (await locatorVisible(candidate)) visible.push(candidate);
+    }
+    if (visible.length > 1) throw new Error(`${message}: ${name} visible_matches=${visible.length}`);
+    if (visible.length === 1) return visible[0];
+  }
+  throw new Error(`${message}: visible_matches=0`);
+}
+
+async function ensureConversationHistoryVisible({ tab }) {
+  const openSidebar = await firstVisibleNamedControl({
+    tab,
+    role: 'button',
+    names: CHATGPT_OPEN_SIDEBAR_LABELS,
+    message: 'ChatGPT sidebar control is ambiguous',
+  });
+  if (!openSidebar) return;
+  await openSidebar.locator.click({ timeoutMs: 30_000 });
+  await tab.playwright.waitForTimeout(300);
+}
+
+export async function archiveConversation({ tab, provider, uiEvidence = false }) {
+  const currentUrl = new URL(await tab.url());
+  if (!currentUrl.pathname.startsWith('/c/')) {
+    await unavailableWithEvidence({
+      tab,
+      message: `ChatGPT conversation URL is unavailable before archive: ${currentUrl.pathname}`,
+      stage: 'conversation_archive_url_check',
+      provider,
+      uiEvidence,
+      names: [...CHATGPT_MORE_LABELS, ...CHATGPT_ARCHIVE_LABELS],
+    });
+  }
+
+  try {
+    const more = await firstVisibleNamedControl({
+      tab,
+      role: 'button',
+      names: CHATGPT_MORE_LABELS,
+      message: 'ChatGPT conversation menu is ambiguous',
+    });
+    if (!more) throw new Error('conversation_more_control_not_found');
+    await more.locator.click({ timeoutMs: 30_000 });
+    const archive = await findVisibleMenuItemByNames({
+      tab,
+      names: CHATGPT_ARCHIVE_LABELS,
+      message: 'ChatGPT archive menu item is unavailable',
+    });
+    await archive.click({ timeoutMs: 30_000 });
+
+    // ChatGPT can leave the old sidebar entry visible until the page is
+    // refreshed. Refresh before closing so a successful click is not mistaken
+    // for a completed archive operation.
+    await tab.reload();
+    await tab.playwright.waitForLoadState({ state: 'domcontentloaded', timeoutMs: 30_000 });
+    await tab.playwright.waitForTimeout(500);
+    const rateLimitRecovery = await recoverRateLimit({ tab });
+    const historyBlocked = rateLimitRecovery.present && !rateLimitRecovery.dismissed;
+    if (historyBlocked) throw new Error('conversation_archive_history_unavailable');
+    await ensureConversationHistoryVisible({ tab });
+    const stillListed = await conversationLinkIsVisible({ tab, pathname: currentUrl.pathname });
+    if (stillListed) throw new Error('conversation_archive_not_confirmed');
+    return {
+      action: 'archive',
+      confirmed: true,
+      verification: 'sidebar_link_absent_after_reload',
+    };
+  } catch (error) {
+    if (error?.code === 'PROVIDER_UNAVAILABLE') throw error;
+    await unavailableWithEvidence({
+      tab,
+      message: `ChatGPT conversation archive failed: ${String(error?.message || error).slice(0, 240)}`,
+      stage: 'conversation_archive',
+      provider,
+      uiEvidence,
+      names: [...CHATGPT_MORE_LABELS, ...CHATGPT_ARCHIVE_LABELS],
+    });
+  }
 }
 
 export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false, imagePaths = [] }) {
