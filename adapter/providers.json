@@ -57,7 +57,7 @@
     "gemini-current": {
       "adapter": "gemini-web",
       "url": "https://gemini.google.com/app",
-      "target": { "mode": "current" }
+      "target": { "mode": "current", "conversation_cleanup": "delete" }
     }
   }
 }

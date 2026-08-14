@@ -11,6 +11,11 @@ import {
 
 export const GEMINI_COMPOSER_NAMES = ['问问 Gemini', '为 Gemini 输入提示', 'Ask Gemini'];
 export const GEMINI_NEW_CHAT_LABELS = ['发起新对话', '新对话', 'New chat', 'Start new chat'];
+const GEMINI_CONVERSATION_MENU_LABEL = '打开对话操作菜单。';
+const GEMINI_DELETE_LABEL = '删除';
+const GEMINI_DELETE_CONFIRM_LABEL = '删除';
+const GEMINI_DELETE_CONFIRM_TITLE = '要删除对话吗？';
+const GEMINI_DELETE_CONFIRM_TEXT = '此操作将从 Gemini 应用活动记录中删除提示、回答和反馈，以及你创建的所有内容。';
 const SUBMISSION_RETRIES = 2;
 
 async function unavailableWithEvidence({ tab, message, stage, uiEvidence }) {
@@ -53,6 +58,148 @@ async function findComposer(tab) {
     tab.playwright.locator('textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"]'),
     'Gemini composer is unavailable',
   );
+}
+
+function isConversationMenuUrl(url) {
+  return url.hostname === 'gemini.google.com' && (url.pathname === '/app' || url.pathname.startsWith('/app/'));
+}
+
+function conversationSidebarLinkLocator(tab, currentUrl) {
+  if (currentUrl.pathname === '/app' || currentUrl.pathname === '/app/') return null;
+  const href = `${currentUrl.pathname}${currentUrl.search}`;
+  return tab.playwright.locator(`a[href="${href}"]`);
+}
+
+async function waitForConversationCleanupVerification({ tab, conversationMenu, previousUrl, timeoutMs = 10_000 }) {
+  const candidateConversationLink = conversationSidebarLinkLocator(tab, previousUrl);
+  const conversationLink = candidateConversationLink && (await candidateConversationLink.count() === 1
+    ? candidateConversationLink
+    : null);
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const currentUrl = new URL(await tab.url());
+      if (currentUrl.href !== previousUrl.href) {
+        return 'conversation_url_changed_without_reload';
+      }
+    } catch {
+      return 'conversation_url_changed_without_reload';
+    }
+    if (conversationLink && !await locatorVisible(conversationLink)) {
+      return 'sidebar_link_absent_without_reload';
+    }
+
+    if (!await locatorVisible(conversationMenu)) {
+      return 'conversation_menu_disappeared_without_reload';
+    }
+
+    await tab.playwright.waitForTimeout(250);
+  }
+  return null;
+}
+
+async function unavailableWithEvidenceArchive({ tab, message, stage, provider, uiEvidence }) {
+  await unavailableWithEvidence({
+    tab,
+    message,
+    stage,
+    provider,
+    uiEvidence,
+    names: [
+      ...GEMINI_COMPOSER_NAMES,
+      ...GEMINI_NEW_CHAT_LABELS,
+      GEMINI_CONVERSATION_MENU_LABEL,
+      GEMINI_DELETE_LABEL,
+    ],
+  });
+}
+
+export async function archiveConversation({ tab, provider, uiEvidence = false }) {
+  if (provider?.target?.conversation_cleanup !== 'delete') {
+    await unavailableWithEvidenceArchive({
+      tab,
+      message: 'Gemini cleanup requires conversation_cleanup=delete',
+      stage: 'conversation_cleanup_policy',
+      provider,
+      uiEvidence,
+    });
+  }
+
+  const currentUrl = new URL(await tab.url());
+  if (!isConversationMenuUrl(currentUrl)) {
+    await unavailableWithEvidenceArchive({
+      tab,
+      message: `Gemini conversation URL is unavailable before cleanup: ${currentUrl.pathname}`,
+      stage: 'conversation_cleanup_url_check',
+      provider,
+      uiEvidence,
+    });
+  }
+
+  const conversationMenu = await oneVisible(
+    tab.playwright.getByRole('button', { name: GEMINI_CONVERSATION_MENU_LABEL, exact: true }),
+    'Gemini conversation menu is unavailable',
+  );
+  const previousUrl = currentUrl;
+
+  await conversationMenu.click({ timeoutMs: 30_000 });
+  const menu = await oneVisible(
+    tab.playwright.getByRole('menu'),
+    'Gemini conversation menu panel is unavailable',
+  );
+  const deleteMenuItem = await oneVisible(
+    menu.getByRole('menuitem', { name: GEMINI_DELETE_LABEL, exact: true }),
+    'Gemini conversation delete menu item is unavailable',
+  );
+  await deleteMenuItem.click({ timeoutMs: 30_000 });
+
+  const dialog = await oneVisible(tab.playwright.getByRole('dialog'), 'Gemini delete confirmation is unavailable');
+  const title = dialog.getByRole('heading', { name: GEMINI_DELETE_CONFIRM_TITLE, exact: true });
+  if (!await locatorVisible(title)) {
+    await unavailableWithEvidenceArchive({
+      tab,
+      message: 'Gemini delete confirmation title is unavailable',
+      stage: 'conversation_cleanup_confirmation',
+      provider,
+      uiEvidence,
+    });
+  }
+  const detail = tab.playwright.getByText(GEMINI_DELETE_CONFIRM_TEXT, { exact: true });
+  if (!await locatorVisible(detail)) {
+    await unavailableWithEvidenceArchive({
+      tab,
+      message: 'Gemini delete confirmation detail is unexpected',
+      stage: 'conversation_cleanup_confirmation',
+      provider,
+      uiEvidence,
+    });
+  }
+  const confirmDelete = await oneVisible(dialog.getByRole('button', { name: GEMINI_DELETE_CONFIRM_LABEL, exact: true }),
+    'Gemini conversation delete confirmation button is unavailable');
+  await confirmDelete.click({ timeoutMs: 30_000 });
+
+  const verification = await waitForConversationCleanupVerification({
+    tab,
+    conversationMenu,
+    previousUrl,
+    timeoutMs: 12_000,
+  });
+  if (!verification) {
+    await unavailableWithEvidenceArchive({
+      tab,
+      message: 'Gemini conversation deletion could not be confirmed',
+      stage: 'conversation_cleanup_verification',
+      provider,
+      uiEvidence,
+    });
+  }
+
+  return {
+    action: 'delete',
+    confirmed: true,
+    verification,
+  };
 }
 
 async function hasVisibleConversationMessages(tab) {

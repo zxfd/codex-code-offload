@@ -83,6 +83,8 @@ node --test skill/scripts/tests/chatgpt-response-confirmation.test.mjs
 
 每轮 Web-LLM 对话在确认终局回答后，才由对应 Provider Adapter 清理会话，然后关闭 Chrome 标签；`NEED_MORE_CONTEXT` 续聊不会提前清理。ChatGPT 使用“更多 → 归档”，不刷新页面并确认归档菜单关闭；归档失败时保留标签供恢复。DeepSeek 当前真实页面没有归档项，固定使用“会话行菜单 → 删除 → 删除该对话”，确认当前会话链接已从侧栏消失后才关闭标签。删除是不可恢复操作，只有 DeepSeek 的显式清理策略会执行它。
 
+Gemini 现已固化为“会话行菜单 → 删除 → 删除”清理，菜单名称为“打开对话操作菜单。”；删除确认弹窗标题为“要删除对话吗？”，按钮为“删除”。清理前要求当前 URL 为 Gemini 会话页；清理时不刷新页面，确认会话层级已移除或 URL 变化后才允许 Runner 关闭标签。`providers.json` 已将 `gemini-current.target.conversation_cleanup` 固定为 `delete`。
+
 DeepSeek 每次发送前还会确认“专家模式”和“深度思考”均已开启；任一控件无法确认，当前 Provider 失败并按既定路由继续。调用 runner 时必须传入 `browserChannel: "chrome"`。
 
 开启深度思考后，Adapter 会自动延长回答等待预算：350K 保留输出配置最长等待 420 秒，其他深度思考请求至少等待 300 秒，并继续以“停止回答”控件判断是否仍在生成。
