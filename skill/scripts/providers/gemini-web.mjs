@@ -11,6 +11,7 @@ import {
 
 export const GEMINI_COMPOSER_NAMES = ['问问 Gemini', '为 Gemini 输入提示', 'Ask Gemini'];
 export const GEMINI_NEW_CHAT_LABELS = ['发起新对话', '新对话', 'New chat', 'Start new chat'];
+const SUBMISSION_RETRIES = 2;
 
 async function unavailableWithEvidence({ tab, message, stage, uiEvidence }) {
   let uiEvidencePath;
@@ -151,15 +152,21 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
       if (imagePaths.length) {
         attachmentState = await pasteProviderImages({ tab, provider: 'Gemini', imagePaths, composer });
       }
-      const send = tab.playwright.getByRole('button', { name: /^(发送|Send)$/i });
-      if (await locatorVisible(send) && await send.first().isEnabled()) {
-        await send.first().click({ timeoutMs: 30_000 });
+      let submitted = false;
+      for (let attempt = 0; attempt <= SUBMISSION_RETRIES && !submitted; attempt += 1) {
+        const send = tab.playwright.getByRole('button', { name: /^(发送|Send)$/i });
+        if (await locatorVisible(send) && await send.first().isEnabled()) {
+          await send.first().click({ timeoutMs: 30_000 });
+        } else {
+          await composer.press('Enter', { timeoutMs: 30_000 });
+        }
+        submitted = await waitForSubmissionProof({ tab, composer, userMessages, previousUserMessageCount });
+        if (!submitted && attempt < SUBMISSION_RETRIES) {
+          await tab.playwright.waitForTimeout(1_000 * (attempt + 1));
+        }
       }
-      if (!await waitForSubmissionProof({ tab, composer, userMessages, previousUserMessageCount })) {
-        await composer.press('Enter', { timeoutMs: 30_000 });
-      }
-      if (!await waitForSubmissionProof({ tab, composer, userMessages, previousUserMessageCount })) {
-        throw new Error('Gemini prompt submission was not observed after one retry');
+      if (!submitted) {
+        throw new Error('Gemini prompt submission was not observed after two retries');
       }
     },
   });

@@ -14,6 +14,7 @@ export const QWEN_COMPOSER_NAMES = ['有什么我能帮您的吗？', 'How can I
 export const QWEN_NEW_CHAT_LABELS = ['新建对话', 'New chat'];
 export const QWEN_MODEL_CONTROL_NAMES = ['Select Model', '选择模型'];
 export const QWEN_STAY_LOGGED_OUT_LABELS = ['保持注销状态', 'Stay signed out'];
+const SUBMISSION_RETRIES = 2;
 
 async function unavailableWithEvidence({ tab, message, stage, uiEvidence, modelNames = [] }) {
   let uiEvidencePath;
@@ -262,15 +263,16 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
           attachmentState = await pasteProviderImages({ tab, provider: 'Qwen', imagePaths, composer });
         }
         const settleTimeoutMs = composerSettleTimeout(promptText.length);
-        let send = await waitForSendReady(tab, settleTimeoutMs);
-        await send.click({ timeoutMs: 30_000 });
-        if (!await waitForSubmissionProof({ composer, userMessages, previousUserMessageCount, tab })) {
-          send = await waitForSendReady(tab, settleTimeoutMs);
+        let submitted = false;
+        for (let attempt = 0; attempt <= SUBMISSION_RETRIES && !submitted; attempt += 1) {
+          const send = await waitForSendReady(tab, settleTimeoutMs);
           await send.click({ timeoutMs: 30_000 });
-          if (!await waitForSubmissionProof({ composer, userMessages, previousUserMessageCount, tab })) {
-            throw new Error('submission_not_observed_after_one_retry');
+          submitted = await waitForSubmissionProof({ composer, userMessages, previousUserMessageCount, tab });
+          if (!submitted && attempt < SUBMISSION_RETRIES) {
+            await tab.playwright.waitForTimeout(1_000 * (attempt + 1));
           }
         }
+        if (!submitted) throw new Error('submission_not_observed_after_two_retries');
       },
     }));
   } catch (error) {

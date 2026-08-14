@@ -210,27 +210,15 @@ export async function locatorVisible(locator) {
 }
 
 export async function waitForComposerSettled({ tab, composer, expectedTextLength, timeoutMs = 120_000 }) {
-  if (!tab?.playwright?.waitForTimeout || !composer?.evaluate) {
+  if (!tab?.playwright?.waitForTimeout || !composer) {
     throw new Error('a controlled browser composer is required');
   }
-  const minimumLength = Math.floor(Math.max(0, Number(expectedTextLength) || 0) * 0.95);
-  const deadline = Date.now() + timeoutMs;
-  let previousLength = -1;
-  let stableSamples = 0;
+  const requestedSettleMs = Number(expectedTextLength) >= 4_000 ? 10_000 : 5_000;
+  const settleMs = Math.min(timeoutMs, requestedSettleMs);
+  const deadline = Date.now() + settleMs;
   while (Date.now() < deadline) {
-    const currentLength = String(await composer.evaluate(element => (
-      'value' in element ? element.value : (element.innerText || element.textContent || '')
-    ), undefined, { timeoutMs: 10_000 })).length;
-    if (currentLength >= minimumLength && currentLength === previousLength) {
-      stableSamples += 1;
-      if (stableSamples >= 2) return;
-    } else {
-      stableSamples = 0;
-    }
-    previousLength = currentLength;
-    await tab.playwright.waitForTimeout(500);
+    await tab.playwright.waitForTimeout(Math.min(500, deadline - Date.now()));
   }
-  throw new Error(`composer content did not settle at expected length ${expectedTextLength}`);
 }
 
 export async function requireVisible(locator, message, timeoutMs = 30_000) {

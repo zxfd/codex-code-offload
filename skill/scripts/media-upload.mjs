@@ -3,8 +3,9 @@ import { basename, extname, isAbsolute } from 'node:path';
 
 const MAX_IMAGE_COUNT = 4;
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
-const ATTACHMENT_READY_TIMEOUT_MS = 30_000;
+const ATTACHMENT_READY_TIMEOUT_MS = 120_000;
 const ATTACHMENT_UPLOAD_SETTLE_MS = 5_000;
+const PASTE_RETRIES = 2;
 
 export function validateImagePaths(imagePaths = []) {
   if (!Array.isArray(imagePaths)) throw new Error('imagePaths must be an array');
@@ -103,14 +104,26 @@ export async function pasteProviderImages({ tab, provider, imagePaths, composer,
   let state;
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index];
-    await composer.click({ timeoutMs: 10_000 });
-    await tab.clipboard.write([{
-      entries: [{
-        mimeType: clipboardMimeType(file),
-        base64: readFileSync(file).toString('base64'),
-      }],
-    }]);
-    await composer.press('ControlOrMeta+V', { timeoutMs: 10_000 });
+    let pasted = false;
+    let lastPasteError;
+    for (let attempt = 0; attempt <= PASTE_RETRIES; attempt += 1) {
+      try {
+        await composer.click({ timeoutMs: 10_000 });
+        await tab.clipboard.write([{
+          entries: [{
+            mimeType: clipboardMimeType(file),
+            base64: readFileSync(file).toString('base64'),
+          }],
+        }]);
+        await composer.press('ControlOrMeta+V', { timeoutMs: 10_000 });
+        pasted = true;
+        break;
+      } catch (error) {
+        lastPasteError = error;
+        if (attempt < PASTE_RETRIES) await tab.playwright.waitForTimeout(1_000 * (attempt + 1));
+      }
+    }
+    if (!pasted) throw lastPasteError;
     state = await waitForAttachmentReady({
       tab,
       provider,
