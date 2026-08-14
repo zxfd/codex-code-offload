@@ -11,7 +11,7 @@ Use the current Luna task as the sole coordinator. Reuse the Codex App Thread co
 
 - Keep the main Agent on `gpt-5.6-luna` when this Skill is active. Do not silently switch the main Agent.
 - Luna owns classification, model selection, task packets, fallback decisions, verification, integration, and delivery. Direct code edits are not the default role in Luna.
-- For any coding, implementation, or code-repair scope—including patch application, refactors, and deterministic edits—create a `codex_thread` with `gpt-5.3-codex-spark` first (`medium`), then escalate to `high` only for bounded objective checks.
+- For any coding, implementation, or code-repair scope—including patch application, refactors, and deterministic edits—create a `codex_thread` with `gpt-5.3-codex-spark` first (`xhigh`), Spark's maximum supported level.
 - Keep deterministic local work (`commands`, `tests`, formatting, metadata, hashes, and direct reads) in `local_exec`; do not use this exception for code edits.
 - Spark has a separate extra quota and is the default internal route for coding/repair work; quota alone is never a reason to delegate deterministic non-code work.
 - Use Codex App Threads for internal models: `gpt-5.3-codex-spark`, `deepseek-v4-flash-deepseek`, and `deepseek-v4-pro-deepseek`.
@@ -58,7 +58,7 @@ Use the Codex App model-Thread tools, not native `spawn_agent`: `codex_app__list
 
 Use these internal model roles:
 
-- Spark: fast, text-only, low-risk coding or bounded verification. Prefer `medium`; use `high` only when the result has objective local checks.
+- Spark: fast, text-only, low-risk coding or bounded verification. Use `xhigh` as the route default.
 - V4 Flash: fast, text-only long-context triage, log correlation, document/source summarization, and evidence extraction.
 - V4 Pro: text-only paid fallback for a serial task or parallel branch whose entire eligible Web-LLM Provider chain has failed. It is not a primary route for Pro-class reasoning.
 

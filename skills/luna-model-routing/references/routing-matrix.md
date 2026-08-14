@@ -7,7 +7,7 @@ Luna makes the decision. The matrix chooses a primary route; it is not a command
 | Condition | Primary route | Default thinking | Notes |
 |---|---|---|---|
 | Deterministic command, test, formatter, metadata-only operation | `local_exec` | n/a | Never delegate merely because the task is long. |
-| Text-only coding, implementation, or repair, including patch application and bounded refactors | `codex_thread` | Spark `medium` | Use Spark by default for code-modifying text work; escalate to `high` only for objective bounded checks. |
+| Text-only coding, implementation, or repair, including patch application and bounded refactors | `codex_thread` | Spark `xhigh` | Use Spark by default for code-modifying text work; keep `xhigh` for objective bounded checks. |
 | Text-only long logs/docs/source, triage or evidence extraction | `codex_thread` | V4 Flash `high` | Prefer for context-heavy, lower-risk synthesis. |
 | Text-only architecture, difficult root cause, security, high risk | `web_llm_thread` | Provider configured | This replaces the former V4 Pro primary route; Luna verifies before edits. |
 | Single explicit `http`/`https` URL that requires opening a fresh Chrome task tab | `web_llm_thread` | Provider configured | Mandatory pre-ingest via `ingestSingleUrlWithLocalContext`; default no transfer (`allowExternalTransfer=false`) until explicit approval; execute only the approved named provider once per invocation. |
@@ -47,7 +47,7 @@ When parallelism is justified and a branch selects Web-LLM, create one new Codex
 
 ## Reasoning guidance
 
-- Spark: `medium` default; `high` only for bounded coding with objective checks. Its separate extra quota makes it the default internal route for eligible coding and repair tasks, but never the final authority for high-risk decisions.
+- Spark: `xhigh` default; its separate extra quota makes it the default internal route for eligible coding and repair tasks, and this is the maximum supported Spark thinking level.
 - V4 Flash: `low` for simple triage, `high` for long-text correlation.
 - V4 Pro: `high` for the normal paid fallback, `max` only when the error cost or reasoning depth warrants it; never select it before the branch's Web-LLM chain is exhausted.
 - Web-LLM: use the configured Provider model/strength policy; do not substitute an unconfigured model.

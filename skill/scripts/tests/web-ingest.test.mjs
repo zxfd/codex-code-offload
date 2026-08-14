@@ -74,6 +74,28 @@ test('Luna routing skill contract: mandatory single-URL pre-ingest and approved 
   );
 });
 
+test('Spark routing docs default to xhigh as the highest supported thinking level', () => {
+  const skill = readFileSync(SKILL_PATH, 'utf8');
+  const routing = readFileSync(ROUTING_PATH, 'utf8');
+
+  assert.ok(skill.includes('`xhigh`'), 'missing Spark xhigh invocation in skill');
+  assert.ok(
+    routing.includes('Spark `xhigh`'),
+    'routing matrix must mark Spark coding default as `xhigh`',
+  );
+  assert.ok(
+    routing.includes('maximum supported Spark thinking level'),
+    'routing matrix must document xhigh as Spark maximum supported level',
+  );
+
+  assert.ok(!/Spark\s+`medium`/.test(skill), 'no Spark medium default should remain');
+  assert.ok(!/Spark\s+`medium`/.test(routing), 'no Spark medium default should remain');
+  assert.ok(!/Prefer `medium`/.test(skill), 'no Spark medium preference should remain');
+  assert.ok(!/use `high` only when the result has objective local checks/.test(skill), 'no Spark high preference should remain');
+  assert.ok(!/Spark: `medium` default/.test(routing), 'no Spark medium default should remain');
+  assert.ok(!/`high` only/.test(routing), 'no Spark high-only escalation should remain');
+});
+
 function makeSignals({
   visibleText = 'simple visible extraction',
   imageCount = 1,
