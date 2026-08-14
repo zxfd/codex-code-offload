@@ -1,6 +1,6 @@
 ---
 name: luna-model-routing
-description: Coordinate free-first task routing from a fixed GPT-5.6-Luna main Agent to Web-LLM through Codex App Threads, with Luna Max, DeepSeek V4 Flash, and DeepSeek V4 Pro as explicit routes. Use when a task needs model selection, cross-model communication, Web-LLM offload, unified task receipts, or the serial/parallel-branch Web-LLM-to-V4-Pro fallback.
+description: Coordinate free-first task routing from a fixed GPT-5.6-Luna main Agent to Web-LLM through Codex App Threads, with Luna Max, Luna Medium, and DeepSeek V4 Pro as explicit routes. Use when a task needs model selection, cross-model communication, Web-LLM offload, unified task receipts, or the serial/parallel-branch Web-LLM-to-V4-Pro fallback.
 ---
 
 # Luna Model Routing
@@ -14,7 +14,8 @@ Use the current Luna task as the sole coordinator. Reuse the Codex App Thread co
 - For any coding, implementation, or code-repair scope—including patch application, refactors, and deterministic edits—keep the work in the current `gpt-5.6-luna` task at `max`; do not create a coding Worker Thread.
 - Keep deterministic local work (`commands`, `tests`, formatting, metadata, hashes, and direct reads) in `local_exec`; do not use this exception for code edits.
 - Luna Max is the default owner for coding and repair work; quota alone is never a reason to delegate deterministic non-code work.
-- Use Codex App Threads for the remaining internal models: `deepseek-v4-flash-deepseek` and `deepseek-v4-pro-deepseek`.
+- For text-only long logs, documents, source triage, log correlation, summarization, or evidence extraction, create a separate `codex_thread` with `gpt-5.6-luna` at `medium` (Luna Medium). The current main Agent must only classify, build the packet, await the receipt, and perform focused verification; it must not perform that route's substantive analysis itself.
+- Use Codex App Threads for the remaining internal routes: Luna Medium (`gpt-5.6-luna`, `medium`) and `deepseek-v4-pro-deepseek`.
 - Use the existing `agentchat-code-offload` Browser Adapter for Web-LLM. A Web-LLM Thread is only a Codex App communication/workflow shell; its answer source remains the Browser Adapter Provider, never the Thread's Codex model, and internal models do not enter `providers.json`.
 - Web-LLM is primary for the architecture, difficult-root-cause, security-sensitive, and other tasks that the old routing would have sent directly to V4 Pro. V4 Pro is a paid fallback only.
 - Workers do not create more Workers, publish, send, delete, pay, change accounts, or perform production actions.
@@ -33,6 +34,13 @@ Use the current Luna task as the sole coordinator. Reuse the Codex App Thread co
 - Luna's acceptance pass remains narrow: inspect `git status --short`, `git diff --stat`, `git diff --check`, changed hunks, and the smallest relevant test output. This is integration evidence, not a second implementation analysis.
 - Do not create a second verifier or repeat the original source analysis by default. Only use a focused verifier when local checks fail or a specific falsifiable risk remains.
 - If focused checks pass, mark the local implementation `verified` and integrate once.
+
+### Mandatory Luna Medium delegation
+
+- Luna Medium is a distinct Codex App Thread, even though it uses the same `gpt-5.6-luna` model family as the coordinator. Set `thinking: medium` explicitly and record the returned real `thread_id`/`host_id`.
+- The coordinator must not inspect, summarize, correlate, or extract the substantive long-text evidence assigned to Luna Medium before the Thread returns. It may only perform the bounded classification needed to build the packet and the focused verification defined in that packet.
+- Never silently downgrade a Luna Medium route to direct current-task work. If the explicit Luna Medium Thread is rejected, unavailable, or cannot accept the packet, follow the route matrix fallback and record the rejection.
+- Luna Medium returns a bounded receipt containing `output_ref`, `tests_run` or evidence checks, `unresolved`, and one short summary; raw long-context input stays in the Thread artifact.
 
 ## Route once, then communicate
 
@@ -59,7 +67,7 @@ Use the Codex App model-Thread tools, not native `spawn_agent`: `codex_app__list
 Use these model roles:
 
 - Luna Max: current-task, text-only coding, implementation, repair, and bounded verification. Use `max` as the route default for code-changing work.
-- V4 Flash: fast, text-only long-context triage, log correlation, document/source summarization, and evidence extraction.
+- Luna Medium: separate `codex_thread`, text-only long-context triage, log correlation, document/source summarization, and evidence extraction. Use `gpt-5.6-luna` with `medium` explicitly; never perform this role in the coordinator task.
 - V4 Pro: text-only paid fallback for a serial task or parallel branch whose entire eligible Web-LLM Provider chain has failed. It is not a primary route for Pro-class reasoning.
 
 If the runtime rejects an explicit model or thinking combination, record the rejection and follow the route matrix. Do not omit the thinking field or silently substitute an unconfigured model.

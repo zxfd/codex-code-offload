@@ -24,6 +24,8 @@ constraints: no child Workers, no external actions, preserve user changes
 
 For Luna Max code work, record `context_policy: source_once | patch_only` in the local implementation receipt and use `source_once`: Luna owns the source context in the current task, then verifies the bounded diff/test evidence without repeating the original analysis.
 
+For Luna Medium work, require `transport: codex_thread`, `model: gpt-5.6-luna`, `thinking: medium`, and `context_policy: source_once`. The coordinator may only construct the packet from already-authoritative facts, wait for the bounded receipt, and run its declared focused verification; it must not analyze, summarize, correlate, or extract the delegated long-context material itself.
+
 For a verifier packet, add only:
 
 ```text
@@ -53,7 +55,7 @@ For a URL-only Web-LLM request that must open a new Chrome tab, Luna inserts one
 |---|---|---|---|---|
 | `current_luna` | current Luna Max task | current task | current task | local implementation receipt |
 | `local_exec` | current Luna task | local tool | current task | command/test/artifact |
-| `codex_thread` | V4 Flash / V4 Pro | Codex App Thread | original Thread message | Thread result |
+| `codex_thread` | Luna Medium / V4 Pro | Codex App Thread | original Thread message | Thread result |
 | `browser_adapter` | Web-LLM Provider | existing offload adapter | same `request_id`, bounded continuation | Provider answer |
 | `web_llm_thread` | one Web-LLM branch | new Codex App Thread wrapping the Browser Adapter | original Thread message plus same `request_id` | Browser Adapter receipt returned by that Thread |
 | `url_preingest` | `ingestSingleUrlWithLocalContext` | same Luna task | bounded `requires_user_approval` payload or `completed` pre-ingest result | bounded local receipt (`status`, `modality`, `pageSignals`, `externalTransfer`) |
@@ -100,7 +102,7 @@ Use `model_source=codex_internal` for internal Threads and `model_source=web_pro
 ## Lifecycle
 
 1. Luna creates the `route_id` and chooses `execution_mode`.
-2. For a `current_luna` code route, implement in the current `gpt-5.6-luna` task at `max` and record the local implementation receipt. For another internal route, use `codex_app__list_projects` when a workspace is needed, then `codex_app__create_thread` with the explicit model, thinking, packet, and project. For a parallel Web-LLM route, create one new Thread per branch and make the Browser Adapter the only reasoning source for that Thread.
+2. For a `current_luna` code route, implement in the current `gpt-5.6-luna` task at `max` and record the local implementation receipt. For a Luna Medium route, create a separate `codex_app__create_thread` with `model: gpt-5.6-luna` and `thinking: medium`; do not process its substantive analysis in the coordinator task. For another internal route, use `codex_app__list_projects` when a workspace is needed, then `codex_app__create_thread` with the explicit model, thinking, packet, and project. For a parallel Web-LLM route, create one new Thread per branch and make the Browser Adapter the only reasoning source for that Thread.
 3. Luna sends exactly one primary packet unless a declared independent parallel split exists; use `codex_app__send_message_to_thread` for every internal or Web-LLM branch Thread.
 4. If the route is URL-based and requires a new Chrome tab, run the `url_preingest` step before provider work:
    - first run the installed-skill health check at `/Users/gin/.agents/skills/luna-model-routing` from `skills/luna-model-routing/scripts/health-check.mjs`;
@@ -115,6 +117,6 @@ Use `model_source=codex_internal` for internal Threads and `model_source=web_pro
 7. Luna performs focused local verification from the bounded receipt and changed hunks; it does not repeat the original source analysis.
 8. Luna may ask the same internal Thread once only for a concrete failed check or unresolved falsifiable claim, sending the minimum failure tail and claim; never resend the complete packet by default.
 9. Luna applies the route matrix fallback, preserving the same `route_id` and incrementing `attempt`.
-10. Luna accepts or blocks the route, then edits/tests/ships from the current task. Archive an accepted internal or Web-LLM workflow Thread only after verification with `codex_app__set_thread_archived`.
+10. Luna accepts or blocks the route, then edits/tests/ships from the current task only where the route permits it. For a Luna Medium route, the coordinator verifies and integrates the bounded receipt without repeating its substantive analysis. Archive an accepted internal or Web-LLM workflow Thread only after verification with `codex_app__set_thread_archived`.
 
 Do not create a replacement merely because a progress snapshot is unchanged. Create one only after a real failure, a declared dependency change, or a documented verification conflict.
