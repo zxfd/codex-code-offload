@@ -5,6 +5,7 @@ import {
   locatorVisible,
   submitPromptFromFile,
   unavailable,
+  waitForComposerSettled,
   waitForAssistantAnswer,
 } from '../provider-utils.mjs';
 
@@ -141,6 +142,12 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
     promptPath,
     submit: async promptText => {
       await composer.fill(promptText, { timeoutMs: 60_000 });
+      await waitForComposerSettled({
+        tab,
+        composer,
+        expectedTextLength: promptText.length,
+        timeoutMs: promptText.length >= 8_000 ? 120_000 : 20_000,
+      });
       if (imagePaths.length) {
         attachmentState = await pasteProviderImages({ tab, provider: 'Gemini', imagePaths, composer });
       }

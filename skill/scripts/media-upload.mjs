@@ -4,6 +4,7 @@ import { basename, extname, isAbsolute } from 'node:path';
 const MAX_IMAGE_COUNT = 4;
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const ATTACHMENT_READY_TIMEOUT_MS = 30_000;
+const ATTACHMENT_UPLOAD_SETTLE_MS = 5_000;
 
 export function validateImagePaths(imagePaths = []) {
   if (!Array.isArray(imagePaths)) throw new Error('imagePaths must be an array');
@@ -71,10 +72,20 @@ async function readAttachmentState(tab, provider) {
 async function waitForAttachmentReady({ tab, provider, baselineCount, minimumCount, timeoutMs = ATTACHMENT_READY_TIMEOUT_MS }) {
   const deadline = Date.now() + timeoutMs;
   let lastState = { provider, visibleAttachmentCount: 0, visibleNames: [] };
+  let readySince = null;
   while (Date.now() < deadline) {
     lastState = await readAttachmentState(tab, provider);
     if (lastState.visibleAttachmentCount >= baselineCount + minimumCount) {
-      return { ready: true, count: minimumCount, state: lastState };
+      readySince ??= Date.now();
+      if (Date.now() - readySince >= ATTACHMENT_UPLOAD_SETTLE_MS) {
+        const settledState = await readAttachmentState(tab, provider);
+        if (settledState.visibleAttachmentCount >= baselineCount + minimumCount) {
+          return { ready: true, count: minimumCount, state: settledState };
+        }
+        readySince = null;
+      }
+    } else {
+      readySince = null;
     }
     await tab.playwright.waitForTimeout(250);
   }

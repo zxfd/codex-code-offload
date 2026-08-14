@@ -6,6 +6,7 @@ import {
   locatorVisible,
   submitPromptFromFile,
   unavailable,
+  waitForComposerSettled,
   waitForAssistantAnswer,
 } from '../provider-utils.mjs';
 
@@ -251,6 +252,12 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
       promptPath,
       submit: async promptText => {
         await composer.fill(promptText, { timeoutMs: 60_000 });
+        await waitForComposerSettled({
+          tab,
+          composer,
+          expectedTextLength: promptText.length,
+          timeoutMs: composerSettleTimeout(promptText.length),
+        });
         if (imagePaths.length) {
           attachmentState = await pasteProviderImages({ tab, provider: 'Qwen', imagePaths, composer });
         }
