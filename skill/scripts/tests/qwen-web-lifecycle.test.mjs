@@ -1,0 +1,141 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { runProviderFallback } from '../web-provider-runner.mjs';
+
+function makeMockProviderAdapter({ shouldFailArchive = false, events = [] } = {}) {
+  const module = {
+    async run() {
+      events.push('run');
+      return {
+        provider: 'Qwen',
+        model: 'Qwen3.8-Max',
+        answer: 'Qwen answer',
+      };
+    },
+    async archiveConversation() {
+      events.push('archive');
+      if (shouldFailArchive) throw new Error('mock archive failed');
+      return {
+        action: 'archive',
+        confirmed: true,
+        verification: 'sidebar_link_absent_without_reload',
+      };
+    },
+  };
+  return { events, module };
+}
+
+function makeLifecycleTab(events) {
+  return {
+    events,
+    async close() {
+      events.push('close');
+    },
+    async goto() {},
+    async url() { return 'https://chat.qwen.ai/c/adapter-test'; },
+    async reload() {},
+    playwright: {},
+  };
+}
+
+function makePromptDir(text = 'archive-only test') {
+  const promptDir = mkdtempSync(join(tmpdir(), 'codex-web-reasoning-prompt-'));
+  const promptPath = join(promptDir, 'prompt.txt');
+  writeFileSync(promptPath, text, 'utf8');
+  return { promptDir, promptPath };
+}
+
+function makeProviderConfig() {
+  const state = {
+    version: 3,
+    routes: {
+      text: {
+        priority: ['qwen-terminal-lifecycle'],
+      },
+      multimodal: {
+        priority: ['qwen-terminal-lifecycle'],
+      },
+    },
+    providers: {
+      'qwen-terminal-lifecycle': {
+        adapter: 'qwen-web',
+        url: 'https://chat.qwen.ai/',
+        target: {
+          models: ['Qwen3.8-Max', 'Qwen3.7-Max'],
+        },
+      },
+    },
+  };
+  const providersDir = mkdtempSync(join(tmpdir(), 'codex-web-reasoning-providers-'));
+  const providersPath = join(providersDir, 'providers.json');
+  writeFileSync(providersPath, JSON.stringify(state));
+  return { providersDir, providersPath };
+}
+
+test('Qwen terminal lifecycle closes tab only after archive succeeds', async () => {
+  const mockEvents = [];
+  const { module: adapter } = makeMockProviderAdapter({ events: mockEvents });
+  const { promptDir, promptPath } = makePromptDir();
+  const { providersDir, providersPath } = makeProviderConfig();
+  const stateDir = mkdtempSync(join(tmpdir(), 'codex-web-reasoning-state-'));
+  const tab = makeLifecycleTab(mockEvents);
+
+  const result = await runProviderFallback({
+    browser: { tabs: { new: async () => tab } },
+    browserChannel: 'chrome',
+    promptPath,
+    role: 'assistant',
+    configPath: providersPath,
+    stateDir,
+    adapterLoader: async () => adapter,
+  });
+
+  assert.equal(result.provider, 'Qwen');
+  assert.equal(result.conversationCleanup.action, 'archive');
+  assert.deepEqual(mockEvents, ['run', 'archive', 'close']);
+
+  rmSync(promptDir, { recursive: true, force: true });
+  rmSync(providersDir, { recursive: true, force: true });
+  rmSync(stateDir, { recursive: true, force: true });
+});
+test('Qwen terminal lifecycle keeps tab open when archive cannot be verified', async () => {
+  const mockEvents = [];
+  const { module: adapter } = makeMockProviderAdapter({ shouldFailArchive: true, events: mockEvents });
+  const { promptDir, promptPath } = makePromptDir('archive failure test');
+  const { providersDir, providersPath } = makeProviderConfig();
+  const stateDir = mkdtempSync(join(tmpdir(), 'codex-web-reasoning-state-'));
+  const tab = makeLifecycleTab(mockEvents);
+  let caught;
+
+  try {
+    await runProviderFallback({
+      browser: { tabs: { new: async () => tab } },
+      browserChannel: 'chrome',
+      promptPath,
+      role: 'assistant',
+      configPath: providersPath,
+      stateDir,
+      adapterLoader: async () => adapter,
+    });
+    throw new Error('expected failure did not happen');
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.equal(caught?.name, 'ProviderUnavailableError');
+  assert.equal(mockEvents.includes('close'), false);
+  assert.deepEqual(mockEvents, ['run', 'archive']);
+  const logFile = join(stateDir, 'events.jsonl');
+  const logLines = readFileSync(logFile, 'utf8').trim().split('\n');
+  const finalLog = JSON.parse(logLines.at(-1));
+  const terminalAttempt = finalLog.provider_attempts.find(entry => entry.status === 'conversation_cleanup_failed');
+  assert.equal(terminalAttempt?.status, 'conversation_cleanup_failed');
+
+  rmSync(promptDir, { recursive: true, force: true });
+  rmSync(providersDir, { recursive: true, force: true });
+  rmSync(stateDir, { recursive: true, force: true });
+});

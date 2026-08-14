@@ -14,6 +14,9 @@ export const QWEN_COMPOSER_NAMES = ['有什么我能帮您的吗？', 'How can I
 export const QWEN_NEW_CHAT_LABELS = ['新建对话', 'New chat'];
 export const QWEN_MODEL_CONTROL_NAMES = ['Select Model', '选择模型'];
 export const QWEN_STAY_LOGGED_OUT_LABELS = ['保持注销状态', 'Stay signed out'];
+export const QWEN_CONVERSATION_MENU_LABELS = ['Chat Menu', '更多', '更多操作'];
+export const QWEN_ARCHIVE_LABELS = ['归档', 'Archive'];
+export const QWEN_ARCHIVE_CONFIRM_LABELS = ['确定', '确认', 'Archive', '归档'];
 const SUBMISSION_RETRIES = 2;
 
 async function unavailableWithEvidence({ tab, message, stage, uiEvidence, modelNames = [] }) {
@@ -26,9 +29,12 @@ async function unavailableWithEvidence({ tab, message, stage, uiEvidence, modelN
         stage,
         acceptedNames: [
           ...QWEN_COMPOSER_NAMES,
-          ...QWEN_NEW_CHAT_LABELS,
-          ...QWEN_MODEL_CONTROL_NAMES,
-          ...QWEN_STAY_LOGGED_OUT_LABELS,
+        ...QWEN_NEW_CHAT_LABELS,
+        ...QWEN_MODEL_CONTROL_NAMES,
+        ...QWEN_ARCHIVE_LABELS,
+        ...QWEN_ARCHIVE_CONFIRM_LABELS,
+        ...QWEN_CONVERSATION_MENU_LABELS,
+        ...QWEN_STAY_LOGGED_OUT_LABELS,
           ...modelNames,
           '发送',
           'Send',
@@ -60,6 +66,43 @@ async function oneVisible(locator, message) {
   return visible[0];
 }
 
+async function waitForConversationCleanupVerification({ tab, conversationMenu, previousUrl, timeoutMs = 10_000 }) {
+  const conversationHref = `${previousUrl.pathname}${previousUrl.search}`;
+  const candidateConversationLink = tab.playwright.locator(`a[href="${conversationHref}"]`);
+  const conversationLink = candidateConversationLink && (await candidateConversationLink.count() === 1 ? candidateConversationLink : null);
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const currentUrl = new URL(await tab.url());
+      if (currentUrl.href !== previousUrl.href) {
+        return 'conversation_url_changed_without_reload';
+      }
+    } catch {
+      return 'conversation_url_changed_without_reload';
+    }
+
+    if (conversationLink && !await locatorVisible(conversationLink)) {
+      return 'sidebar_link_absent_without_reload';
+    }
+
+    if (!await locatorVisible(conversationMenu)) {
+      return 'conversation_menu_disappeared_without_reload';
+    }
+
+    await tab.playwright.waitForTimeout(250);
+  }
+
+  return null;
+}
+
+function isConversationUrl(currentUrl, conversationMenuVisible = false) {
+  return (
+    currentUrl?.hostname === 'chat.qwen.ai'
+    && (currentUrl.pathname !== '/' || Boolean(currentUrl.search) || conversationMenuVisible)
+  );
+}
+
 async function findComposer(tab) {
   for (const name of QWEN_COMPOSER_NAMES) {
     const named = tab.playwright.getByRole('textbox', { name, exact: true });
@@ -71,6 +114,104 @@ async function findComposer(tab) {
     tab.playwright.locator('textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"]'),
     'Qwen composer is unavailable',
   );
+}
+
+async function findMenuItem({ tab, names }) {
+  const roles = ['menuitem', 'button'];
+  for (const role of roles) {
+    for (const name of names) {
+      const controls = tab.playwright.getByRole(role, { name, exact: true });
+      if (!controls?.count) continue;
+      const visible = await visibleLocators(controls);
+      if (visible.length === 1) return visible[0];
+      if (visible.length > 1) {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+export async function archiveConversation({ tab, provider, uiEvidence = false }) {
+  const currentUrl = new URL(await tab.url());
+  const conversationMenu = await firstVisibleControl(tab, ['button'], QWEN_CONVERSATION_MENU_LABELS);
+  if (!isConversationUrl(currentUrl, Boolean(conversationMenu))) {
+    await unavailableWithEvidence({
+      tab,
+      message: `Qwen conversation URL is unavailable before cleanup: ${currentUrl.pathname}`,
+      stage: 'conversation_cleanup_url_check',
+      uiEvidence,
+      modelNames: provider?.target?.models,
+    });
+  }
+
+  const conversationHref = `${currentUrl.pathname}${currentUrl.search}`;
+  const conversationLink = tab.playwright.locator(`a[href="${conversationHref}"]`);
+  let resolvedConversationMenu = null;
+  if (await locatorVisible(conversationLink)) {
+    const byControl = conversationLink.getByRole && conversationLink.getByRole('button');
+    if (byControl && await locatorVisible(byControl)) {
+      resolvedConversationMenu = byControl;
+    }
+  }
+  if (!resolvedConversationMenu) {
+    resolvedConversationMenu = conversationMenu;
+  }
+  if (!resolvedConversationMenu) {
+    await unavailableWithEvidence({
+      tab,
+      message: 'Qwen conversation menu is unavailable',
+      stage: 'conversation_cleanup_menu_check',
+      uiEvidence,
+      modelNames: provider?.target?.models,
+    });
+  }
+
+  await resolvedConversationMenu.click({ timeoutMs: 30_000 });
+  const archiveItem = await findMenuItem({
+    tab,
+    names: QWEN_ARCHIVE_LABELS,
+  });
+  if (!archiveItem || !await locatorVisible(archiveItem)) {
+    await unavailableWithEvidence({
+      tab,
+      message: 'Qwen conversation archive menu item is unavailable',
+      stage: 'conversation_cleanup_archive_menu_item',
+      uiEvidence,
+      modelNames: provider?.target?.models,
+    });
+  }
+  await archiveItem.click({ timeoutMs: 30_000 });
+
+  const maybeConfirm = await findMenuItem({
+    tab,
+    names: QWEN_ARCHIVE_CONFIRM_LABELS,
+  });
+  if (maybeConfirm && await locatorVisible(maybeConfirm)) {
+    await maybeConfirm.click({ timeoutMs: 30_000 });
+  }
+
+  const verification = await waitForConversationCleanupVerification({
+    tab,
+    conversationMenu,
+    previousUrl: currentUrl,
+    timeoutMs: 12_000,
+  });
+  if (!verification) {
+    await unavailableWithEvidence({
+      tab,
+      message: 'Qwen conversation archive could not be confirmed',
+      stage: 'conversation_cleanup_verification',
+      uiEvidence,
+      modelNames: provider?.target?.models,
+    });
+  }
+
+  return {
+    action: 'archive',
+    confirmed: true,
+    verification,
+  };
 }
 
 async function firstVisibleControl(tab, roles, names) {

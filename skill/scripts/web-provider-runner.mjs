@@ -164,8 +164,18 @@ async function closeTab(tab) {
   }
 }
 
-export async function runWebProvider({ providerId, provider, tab, promptPath, timeoutMs, continuation = false, uiEvidence = false, imagePaths = [] }) {
-  const module = await importAdapter(provider.adapter);
+export async function runWebProvider({
+  providerId,
+  provider,
+  tab,
+  promptPath,
+  timeoutMs,
+  continuation = false,
+  uiEvidence = false,
+  imagePaths = [],
+  adapterLoader = importAdapter,
+}) {
+  const module = await adapterLoader(provider.adapter);
   if (typeof module.run !== 'function') throw new Error(`provider adapter has no run(): ${provider.adapter}`);
   return module.run({ providerId, provider, tab, promptPath, timeoutMs, continuation, uiEvidence, imagePaths });
 }
@@ -176,8 +186,8 @@ export function assertChromeBrowser(browser, browserChannel) {
   }
 }
 
-async function cleanupWebProvider({ providerId, provider, tab, uiEvidence = false }) {
-  const module = await importAdapter(provider.adapter);
+async function cleanupWebProvider({ providerId, provider, tab, uiEvidence = false, adapterLoader = importAdapter }) {
+  const module = await adapterLoader(provider.adapter);
   if (typeof module.archiveConversation !== 'function') return null;
   return module.archiveConversation({ providerId, provider, tab, uiEvidence });
 }
@@ -194,6 +204,7 @@ export async function runProviderFallback({
   tabs = new Map(),
   uiEvidence = false,
   imagePaths = [],
+  adapterLoader = importAdapter,
 }) {
   if (!browser?.tabs?.new) throw new Error('a controlled Browser is required');
   assertChromeBrowser(browser, browserChannel);
@@ -251,6 +262,7 @@ export async function runProviderFallback({
         continuation,
         uiEvidence,
         imagePaths: mediaFiles,
+        adapterLoader,
       });
       if (route.modality === 'multimodal' && result.attachmentsReady !== true) throw new Error('provider did not confirm image attachments are ready');
       health.providers[providerId] = { status: 'available', last_success: new Date().toISOString(), target_signature: providerSignature };
@@ -259,7 +271,13 @@ export async function runProviderFallback({
       let conversationCleanup = null;
       if (isTerminalAnswer(result.answer)) {
         try {
-          conversationCleanup = await cleanupWebProvider({ providerId, provider, tab, uiEvidence });
+          conversationCleanup = await cleanupWebProvider({
+            providerId,
+            provider,
+            tab,
+            uiEvidence,
+            adapterLoader,
+          });
         } catch (error) {
           error.cacheFailure = false;
           error.keepTabOpen = true;

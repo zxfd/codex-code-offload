@@ -82,7 +82,11 @@ node --test skill/scripts/tests/chatgpt-response-confirmation.test.mjs
 
 ## 终局会话清理
 
-每轮 Web-LLM 对话在确认终局回答后，才由对应 Provider Adapter 清理会话，然后关闭 Chrome 标签；`NEED_MORE_CONTEXT` 续聊不会提前清理。ChatGPT 使用“更多 → 归档”，不刷新页面并确认归档菜单关闭；归档失败时保留标签供恢复。DeepSeek 当前真实页面没有归档项，固定使用“会话行菜单 → 删除 → 删除该对话”，确认当前会话链接已从侧栏消失后才关闭标签。删除是不可恢复操作，只有 DeepSeek 的显式清理策略会执行它。
+每轮 Web-LLM 对话在确认终局回答后，才由对应 Provider Adapter 清理会话，然后关闭 Chrome 标签；`NEED_MORE_CONTEXT` 续聊不会提前清理。ChatGPT 使用“更多 → 归档”，不刷新页面并确认归档菜单关闭；归档失败时保留标签供恢复。
+
+Qwen 采用“会话行菜单 → 归档”，并且只在“归档”成功确认后关闭标签；归档动作会被视为首选清理路径，失败会保留标签供后续恢复。
+
+DeepSeek 当前真实页面没有归档项，固定使用“会话行菜单 → 删除 → 删除该对话”，确认当前会话链接已从侧栏消失后才关闭标签。删除是不可恢复操作，只有 DeepSeek 的显式清理策略会执行它。
 
 Gemini 现已固化为“会话行菜单 → 删除 → 删除”清理，菜单名称为“打开对话操作菜单。”；删除确认弹窗标题为“要删除对话吗？”，按钮为“删除”。清理前要求当前 URL 为 Gemini 会话页；清理时不刷新页面，确认会话层级已移除或 URL 变化后才允许 Runner 关闭标签。`providers.json` 已将 `gemini-current.target.conversation_cleanup` 固定为 `delete`。
 
