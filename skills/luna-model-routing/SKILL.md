@@ -91,6 +91,42 @@ The Web-LLM-to-V4-Pro fallback is per serial route or per parallel branch, and i
 
 For `execution_mode: parallel`, every independent branch starts with its own Web-LLM Thread. If that branch exhausts Web-LLM, create at most one V4 Pro fallback Thread for that branch; do not create V4 Pro preemptively or retry V4 Pro a second time.
 
+### Mandatory URL ingestion gate for new Chrome tasks
+
+For any fresh Luna task that is based on one explicit user-approved `http`/`https` URL and requires opening a new Chrome tab:
+
+- run the generic pre-ingestion helper first: `ingestSingleUrlWithLocalContext` from `skill/scripts/web-ingest.mjs`;
+- treat it as mandatory and never replace it with ad-hoc DOM/text/screenshot extraction in this route;
+- keep the accepted processing-policy shape to only these fields:
+
+```text
+{
+  allowText: true,
+  allowVisual: true,
+  allowExternalTransfer: false,
+  maxImages: 4,
+}
+```
+
+- always default with `allowExternalTransfer: false`, so the function should return `status: requires_user_approval` with a bounded receipt and **must not call any provider** until explicit re-approval.
+- do not accept URL lists, wildcard URLs, commas/spaces, or redirects that change origin; reject those as bounded route blocks before transfer;
+- never reuse an existing provider tab for this pre-ingest step; use a newly opened Chrome task tab and keep receipt-only continuation with `request_id`.
+
+A fresh-task execution must follow this two-step route:
+
+1. Invoke `ingestSingleUrlWithLocalContext(..., { allowExternalTransfer: false, ... })`.
+   - This step owns local extraction, capture, sanitization, and bounded receipt creation.
+2. If the status is `requires_user_approval`, request explicit user approval for the specific action and the named provider.
+3. After explicit approval, invoke `ingestSingleUrlWithLocalContext` again with `allowExternalTransfer: true` and a wrapped/overridden `runProvider` that routes to exactly one **named provider only**.
+
+Luna must treat the ingestion receipt as bounded evidence: text previews, signal counts, modality, risk levels, provider/model, attachments readiness, and error/blocked reason. Raw DOM, page body, OCR text, screenshots, query tokens, cookies/storage, and arbitrary UI diagnostics must never enter Luna/tool output. `ingestSingleUrlWithLocalContext` owns all temporary `prompt.txt` and image artifacts internally; Luna receives only a bounded final receipt and must not expose reusable temporary paths.
+
+Named-provider approval boundary:
+
+- If the named provider returns failure for the same page data, Luna must stop and request a fresh named-provider approval step.
+- Do not retry another provider, and do not auto-run the configured fallback chain after that failure.
+- Do not continue without explicit, user-scoped provider re-approval for the same task context.
+
 ## Verification and execution
 
 - `unverified`: result received but not checked.

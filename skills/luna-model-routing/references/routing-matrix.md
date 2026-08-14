@@ -10,6 +10,7 @@ Luna makes the decision. The matrix chooses a primary route; it is not a command
 | Text-only coding, implementation, or repair, including patch application and bounded refactors | `codex_thread` | Spark `medium` | Use Spark by default for code-modifying text work; escalate to `high` only for objective bounded checks. |
 | Text-only long logs/docs/source, triage or evidence extraction | `codex_thread` | V4 Flash `high` | Prefer for context-heavy, lower-risk synthesis. |
 | Text-only architecture, difficult root cause, security, high risk | `web_llm_thread` | Provider configured | This replaces the former V4 Pro primary route; Luna verifies before edits. |
+| Single explicit `http`/`https` URL that requires opening a fresh Chrome task tab | `web_llm_thread` | Provider configured | Mandatory pre-ingest via `ingestSingleUrlWithLocalContext`; default no transfer (`allowExternalTransfer=false`) until explicit approval; execute only the approved named provider once per invocation. |
 | Image, screenshot, visual OCR, layout, chart, or pixel-dependent meaning | `browser_adapter` or `web_llm_thread` for a parallel branch | Provider configured | Do not send to text-only internal models. |
 | Internal context exceeds safe verified budget or external independent opinion is required | `browser_adapter` or `web_llm_thread` for a parallel branch | Provider configured | Keep large raw context out of Luna. |
 
@@ -23,6 +24,8 @@ Use a single direction and record every transition:
 |---|---|---|
 | Spark unavailable/rejected | Luna or Web-LLM by task size | Luna decides replacement |
 | V4 Flash unavailable | Web-LLM, then V4 Pro only if Web-LLM fully fails | Luna decides replacement |
+| URL pre-ingest blocks or `requires_user_approval` | same route | no route change | stop for user approval; do not auto-fallback or reuse provider attempts without explicit approval |
+| Named Provider failure on approved URL page attempt | same route | no route change | block before fallback and request a fresh named-provider approval |
 | Web-LLM text Providers all fail | One V4 Pro Thread attempt | One V4 Pro fallback Thread per failed branch |
 | Web-LLM visual Providers all fail | `blocked`; V4 Pro cannot see pixels | `blocked` unless local visual proof exists |
 | V4 Pro fallback fails | Luna takeover only within verified safe budget, otherwise `blocked` | Same per branch |

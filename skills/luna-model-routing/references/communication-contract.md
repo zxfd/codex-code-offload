@@ -36,6 +36,15 @@ Never repack the complete original input for verification unless Luna records wh
 
 For Web-LLM, the local adapter remains responsible for literal path validation, secret scanning, extraction, packing, and image policy. Do not paste credentials, cookies, tokens, broad repository context, or unrelated private data.
 
+For a URL-only Web-LLM request that requires a fresh Chrome tab, Luna must enforce:
+
+- pre-ingest with `url_preingest` using `allowExternalTransfer: false` as the default;
+- explicit user approval before any external transfer;
+- re-invocation with `allowExternalTransfer: true` only when approval is granted;
+- one named external provider execution path per approval attempt.
+
+For a URL-only Web-LLM request that must open a new Chrome tab, Luna inserts one mandatory local pre-step: run `ingestSingleUrlWithLocalContext` and record the bounded pre-ingest receipt before any provider call. This receipt is the only Browser-facing handoff input.
+
 ## Transport mapping
 
 | Transport | Recipient | Send mechanism | Continue mechanism | Result source |
@@ -44,6 +53,7 @@ For Web-LLM, the local adapter remains responsible for literal path validation, 
 | `codex_thread` | Spark / V4 Flash / V4 Pro | Codex App Thread | original Thread message | Thread result |
 | `browser_adapter` | Web-LLM Provider | existing offload adapter | same `request_id`, bounded continuation | Provider answer |
 | `web_llm_thread` | one Web-LLM branch | new Codex App Thread wrapping the Browser Adapter | original Thread message plus same `request_id` | Browser Adapter receipt returned by that Thread |
+| `url_preingest` | `ingestSingleUrlWithLocalContext` | same Luna task | bounded `requires_user_approval` payload or `completed` pre-ingest result | bounded local receipt (`status`, `modality`, `pageSignals`, `externalTransfer`) |
 
 The transport value is part of the receipt and must never be inferred from the model name alone.
 
@@ -89,10 +99,17 @@ Use `model_source=codex_internal` for internal Threads and `model_source=web_pro
 1. Luna creates the `route_id` and chooses `execution_mode`.
 2. For an internal route, use `codex_app__list_projects` when a workspace is needed, then `codex_app__create_thread` with the explicit model, thinking, packet, and project. For a parallel Web-LLM route, create one new Thread per branch and make the Browser Adapter the only reasoning source for that Thread.
 3. Luna sends exactly one primary packet unless a declared independent parallel split exists; use `codex_app__send_message_to_thread` for every internal or Web-LLM branch Thread.
-4. The transport returns a result and receipt; use `codex_app__read_thread` or `codex_app__wait_threads` for Thread status/results, and preserve the nested Web-LLM `request_id` and Provider attempts.
-5. Luna performs focused local verification from the bounded receipt and changed hunks; it does not repeat the original source analysis.
-6. Luna may ask the same internal Thread once only for a concrete failed check or unresolved falsifiable claim, sending the minimum failure tail and claim; never resend the complete packet by default.
-7. Luna applies the route matrix fallback, preserving the same `route_id` and incrementing `attempt`.
-8. Luna accepts or blocks the route, then edits/tests/ships from the current task. Archive an accepted internal or Web-LLM workflow Thread only after verification with `codex_app__set_thread_archived`.
+4. If the route is URL-based and requires a new Chrome tab, run the `url_preingest` step before provider work:
+   - `status: blocked/failed` -> treat as terminal for this step and request approval or stop;
+   - `status: requires_user_approval` -> request explicit user approval and do not continue automatically;
+   - `status: completed` -> proceed to Web-LLM provider transport using the same Luna-owned bounded `provider` contract only; `ingestSingleUrlWithLocalContext` keeps temporary prompts/images internally.
+5. Provider execution MUST be limited to one explicitly approved named provider call for that page data.
+   - Do not continue to fallback providers when the approved named provider fails.
+   - When that fails, return for fresh approval and stop this route branch.
+6. The transport returns a result and receipt; use `codex_app__read_thread` or `codex_app__wait_threads` for Thread status/results, and preserve the nested Web-LLM `request_id` and Provider attempts.
+7. Luna performs focused local verification from the bounded receipt and changed hunks; it does not repeat the original source analysis.
+8. Luna may ask the same internal Thread once only for a concrete failed check or unresolved falsifiable claim, sending the minimum failure tail and claim; never resend the complete packet by default.
+9. Luna applies the route matrix fallback, preserving the same `route_id` and incrementing `attempt`.
+10. Luna accepts or blocks the route, then edits/tests/ships from the current task. Archive an accepted internal or Web-LLM workflow Thread only after verification with `codex_app__set_thread_archived`.
 
 Do not create a replacement merely because a progress snapshot is unchanged. Create one only after a real failure, a declared dependency change, or a documented verification conflict.
