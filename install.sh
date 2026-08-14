@@ -4,7 +4,17 @@ set -euo pipefail
 # Canonical install locations (XDG-style, relative to $HOME).
 # CODEX_CODE_OFFLOAD_HOME overrides only the adapter/config location; the Skill
 # always lives under ~/.codex/skills/agentchat-code-offload.
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "${SCRIPT_PATH}" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "${SCRIPT_PATH}")" && pwd)"
+  SCRIPT_TARGET="$(readlink "${SCRIPT_PATH}")"
+  if [[ "${SCRIPT_TARGET}" != /* ]]; then
+    SCRIPT_PATH="${SCRIPT_DIR}/${SCRIPT_TARGET}"
+  else
+    SCRIPT_PATH="${SCRIPT_TARGET}"
+  fi
+done
+REPO_ROOT="$(cd -P "$(dirname "${SCRIPT_PATH}")" && pwd)"
 SKILL_DIR="${HOME}/.codex/skills/agentchat-code-offload"
 WEB_INGEST_SKILL_DIR="${HOME}/.agents/skills/web-ingest"
 ROUTING_SKILL_DIR="${HOME}/.agents/skills/luna-model-routing"
@@ -34,11 +44,19 @@ command -v pdftotext >/dev/null 2>&1 || warn "pdftotext missing; PDF document an
 link_dir() {
   local target="$1" link="$2"
   if [ -e "$link" ] || [ -L "$link" ]; then
-    if [ "$(readlink "$link" 2>/dev/null || true)" = "$target" ]; then
+    if [ ! -L "$link" ]; then
+      die "Refusing to overwrite existing non-symlink path: ${link}"
+    fi
+    local actual_target expected_target
+    actual_target="$(cd -P "$link" 2>/dev/null && pwd -P)" \
+      || die "Refusing to use symlink with an unresolvable target: ${link}"
+    expected_target="$(cd -P "$target" 2>/dev/null && pwd -P)" \
+      || die "Expected symlink target is not resolvable: ${target}"
+    if [ "$actual_target" = "$expected_target" ]; then
       log "Already linked: ${link} -> ${target}"
       return
     fi
-    die "Refusing to overwrite existing path (not the expected symlink): ${link}"
+    die "Refusing to overwrite symlink with an unexpected target: ${link}"
   fi
   mkdir -p "$(dirname "$link")"
   ln -s "$target" "$link"

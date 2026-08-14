@@ -12,12 +12,14 @@ function makeFixture() {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'codex-luna-health-check-'));
   const skillRoot = join(fixtureRoot, 'skills', 'luna-model-routing');
   const skillScripts = join(skillRoot, 'scripts');
-  const genericScripts = join(fixtureRoot, 'skill', 'scripts');
+  const webIngestScripts = join(fixtureRoot, 'skills', 'web-ingest', 'scripts');
+  const browserScripts = join(fixtureRoot, 'skill', 'scripts');
   mkdirSync(skillScripts, { recursive: true });
-  mkdirSync(genericScripts, { recursive: true });
-  writeFileSync(join(genericScripts, 'web-ingest.mjs'), "export function ingestSingleUrlWithLocalContext() {}\nexport function captureVisualArtifacts() {}\n");
-  writeFileSync(join(genericScripts, 'browser-client-entry.mjs'), "export function resolveBrowserClientEntry() {}\n");
-  writeFileSync(join(skillScripts, 'web-ingest.mjs'), "export * from '../../../skill/scripts/web-ingest.mjs';\n");
+  mkdirSync(webIngestScripts, { recursive: true });
+  mkdirSync(browserScripts, { recursive: true });
+  writeFileSync(join(webIngestScripts, 'web-ingest.mjs'), "export function ingestSingleUrlWithLocalContext() {}\nexport function captureVisualArtifacts() {}\n");
+  writeFileSync(join(browserScripts, 'browser-client-entry.mjs'), "export function resolveBrowserClientEntry() {}\n");
+  writeFileSync(join(skillScripts, 'web-ingest.mjs'), "export * from '../../../skills/web-ingest/scripts/web-ingest.mjs';\n");
   writeFileSync(join(skillScripts, 'browser-client-entry.mjs'), "export * from '../../../skill/scripts/browser-client-entry.mjs';\n");
   return { fixtureRoot, skillRoot, skillScripts };
 }
@@ -69,6 +71,34 @@ test('health check fails when forwarding uses an absolute path', async () => {
     const check = report.checks.find(item => item.name === 'forwarding:scripts/web-ingest.mjs' && item.status === 'fail');
     assert.equal(check.message.includes('absolute'), true);
     assert.equal(readFileSync(join(skillScripts, 'web-ingest.mjs'), 'utf8').startsWith('export * from'), true);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('health check fails closed when forwarding has no relative import', async () => {
+  const { fixtureRoot, skillRoot, skillScripts } = makeFixture();
+  try {
+    writeFileSync(join(skillScripts, 'web-ingest.mjs'), "export const forwarding = true;\n");
+    const report = await runLunaModelRoutingHealthCheck({ skillRoot });
+    assert.equal(report.ok, false);
+    const check = report.checks.find(item => item.name === 'forwarding:scripts/web-ingest.mjs' && item.status === 'fail');
+    assert.equal(check.message, 'no relative module specifier found for forwarding implementation');
+    assert.match(check.remediation, /\.\.\/\.\.\/\.\.\/skills\/web-ingest\/scripts\/web-ingest\.mjs/);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('health check keeps forwarding targets independent', async () => {
+  const { fixtureRoot, skillRoot, skillScripts } = makeFixture();
+  try {
+    writeFileSync(join(skillScripts, 'browser-client-entry.mjs'), "export * from '../../../skills/web-ingest/scripts/web-ingest.mjs';\n");
+    const report = await runLunaModelRoutingHealthCheck({ skillRoot });
+    assert.equal(report.ok, false);
+    const check = report.checks.find(item => item.name === 'forwarding:scripts/browser-client-entry.mjs');
+    assert.equal(check.status, 'fail');
+    assert.match(check.remediation, /browser-client-entry|expected forwarding target/);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }

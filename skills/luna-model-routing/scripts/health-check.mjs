@@ -8,11 +8,11 @@ const DEFAULT_GLOBAL_SKILL_ROOT = resolve(homedir(), '.agents', 'skills', 'luna-
 const REQUIRED_ENTRIES = {
   'scripts/web-ingest.mjs': {
     expectedExports: ['ingestSingleUrlWithLocalContext', 'captureVisualArtifacts'],
-    forwardTargetName: 'web-ingest.mjs',
+    expectedForwardSpecifier: '../../../skills/web-ingest/scripts/web-ingest.mjs',
   },
   'scripts/browser-client-entry.mjs': {
     expectedExports: ['resolveBrowserClientEntry'],
-    forwardTargetName: 'browser-client-entry.mjs',
+    expectedForwardSpecifier: '../../../skill/scripts/browser-client-entry.mjs',
   },
 };
 
@@ -21,7 +21,7 @@ function addCheck(report, check) {
   if (check.status === 'fail') report.ok = false;
 }
 
-function inspectForwardingEntry(filePath, source, forwardTargetName) {
+function inspectForwardingEntry(filePath, source, expectedForwardSpecifier) {
   const imported = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(match => match[1]);
   const badAbsoluteImport = imported.find(specifier => isAbsolute(specifier));
   if (badAbsoluteImport) {
@@ -33,23 +33,21 @@ function inspectForwardingEntry(filePath, source, forwardTargetName) {
     };
   }
   const relativeMatch = imported.find(specifier => specifier.startsWith('.'));
-  const forwardMatch = imported.find(
-    specifier => specifier.startsWith('.') && specifier.endsWith(`/${forwardTargetName}`),
-  );
+  const forwardMatch = imported.find(specifier => specifier === expectedForwardSpecifier);
   if (!relativeMatch) {
     return {
       name: filePath,
       status: 'fail',
       message: 'no relative module specifier found for forwarding implementation',
-      remediation: `Use a relative export/re-export from '${forwardTargetName}'.`,
+      remediation: `Use a relative export/re-export from '${expectedForwardSpecifier}'.`,
     };
   }
   if (!forwardMatch) {
     return {
       name: filePath,
       status: 'fail',
-      message: `forwarding does not reference a relative ${forwardTargetName} path`,
-      remediation: `Use a relative path such as '../../../skill/scripts/${forwardTargetName}'.`,
+      message: `forwarding does not reference the expected target ${expectedForwardSpecifier}`,
+      remediation: `Use the independent expected forwarding target '${expectedForwardSpecifier}'.`,
     };
   }
   return { name: filePath, status: 'pass', message: 'entry module forwards via relative path', remediation: null };
@@ -111,12 +109,12 @@ export async function runLunaModelRoutingHealthCheck({ skillRoot = DEFAULT_GLOBA
     if (!existsSync(filePath)) {
       addCheck(report, {
         name: `entry:${entry}`, status: 'fail', message: `required entry module missing: ${entry}`,
-        remediation: `Create ${entry} as a portable forwarding module (relative import) into skills/web-ingest/scripts/${policy.forwardTargetName}.`,
+        remediation: `Create ${entry} as a portable forwarding module using '${policy.expectedForwardSpecifier}'.`,
         detail: { filePath, required: true },
       });
       continue;
     }
-    const forwarding = inspectForwardingEntry(entry, readFileSync(filePath, 'utf8'), policy.forwardTargetName);
+    const forwarding = inspectForwardingEntry(entry, readFileSync(filePath, 'utf8'), policy.expectedForwardSpecifier);
     addCheck(report, {
       name: `forwarding:${entry}`, status: forwarding.status, message: forwarding.message,
       remediation: forwarding.remediation, detail: { filePath },
@@ -136,7 +134,7 @@ export async function runLunaModelRoutingHealthCheck({ skillRoot = DEFAULT_GLOBA
     if (missingExports.length > 0) {
       addCheck(report, {
         name: `exports:${entry}`, status: 'fail', message: `missing exports in ${entry}: ${missingExports.join(', ')}`,
-      remediation: `Keep forwarding module signature compatible with underlying skills/web-ingest/scripts/${policy.forwardTargetName}.`,
+      remediation: `Keep forwarding module signature compatible with the expected target ${policy.expectedForwardSpecifier}.`,
         detail: { missingExports },
       });
       continue;

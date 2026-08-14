@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "${SCRIPT_PATH}" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "${SCRIPT_PATH}")" && pwd)"
+  SCRIPT_TARGET="$(readlink "${SCRIPT_PATH}")"
+  if [[ "${SCRIPT_TARGET}" != /* ]]; then
+    SCRIPT_PATH="${SCRIPT_DIR}/${SCRIPT_TARGET}"
+  else
+    SCRIPT_PATH="${SCRIPT_TARGET}"
+  fi
+done
+REPO_ROOT="$(cd -P "$(dirname "${SCRIPT_PATH}")" && pwd)"
 SKILL_DIR="${HOME}/.codex/skills/agentchat-code-offload"
 WEB_INGEST_SKILL_DIR="${HOME}/.agents/skills/web-ingest"
 ROUTING_SKILL_DIR="${HOME}/.agents/skills/luna-model-routing"
@@ -14,7 +24,16 @@ log() { printf '\n[uninstall] %s\n' "$*"; }
 remove_link() {
   local link="$1" expected_target="$2"
   if [ -L "$link" ]; then
-    if [ "$(readlink "$link" 2>/dev/null || true)" = "$expected_target" ]; then
+    local actual_canonical expected_canonical
+    actual_canonical="$(cd -P "$link" 2>/dev/null && pwd -P)" || {
+      log "Skipping symlink with an unresolvable target: ${link}"
+      return
+    }
+    expected_canonical="$(cd -P "$expected_target" 2>/dev/null && pwd -P)" || {
+      log "Skipping link because expected target is unresolvable: ${link}"
+      return
+    }
+    if [ "$actual_canonical" = "$expected_canonical" ]; then
       rm -f "$link"
       log "Removed link: ${link}"
     else
