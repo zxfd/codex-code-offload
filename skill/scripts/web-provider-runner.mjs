@@ -281,6 +281,7 @@ export async function runProviderFallback({
         image_count: mediaFiles.length,
         result_length: result.answer.length,
         response_confirmed: result.responseConfirmed === true,
+        deep_thinking_confirmed: result.deepThinking === true,
         conversation_cleanup: conversationCleanup?.action || null,
         conversation_cleanup_confirmed: conversationCleanup?.confirmed === true,
         conversation_cleanup_verification: conversationCleanup?.verification || null,

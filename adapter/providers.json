@@ -25,6 +25,8 @@
       "url": "https://chat.deepseek.com/",
       "target": {
         "mode": "专家模式",
+        "deep_thinking": true,
+        "conversation_cleanup": "delete",
         "context_tokens": 1000000,
         "reserved_output_tokens": 350000,
         "max_input_tokens": 650000

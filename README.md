@@ -79,9 +79,11 @@ ChatGPT 的发送和回答确认是同一个请求闭环：adapter 会记录发�
 node --test skill/scripts/tests/chatgpt-response-confirmation.test.mjs
 ```
 
-## ChatGPT 会话清理
+## 终局会话清理
 
-每轮 ChatGPT 对话在确认终局回答后，会先关闭可能出现的“请求过于频繁”弹窗，再通过当前 Provider Adapter 点击“更多 → 归档”，不刷新页面，确认归档菜单已关闭后才关闭 Chrome 标签。调用 runner 时必须传入 `browserChannel: "chrome"`；归档失败时保留标签供恢复，默认不执行不可逆的删除。
+每轮 Web-LLM 对话在确认终局回答后，才由对应 Provider Adapter 清理会话，然后关闭 Chrome 标签；`NEED_MORE_CONTEXT` 续聊不会提前清理。ChatGPT 使用“更多 → 归档”，不刷新页面并确认归档菜单关闭；归档失败时保留标签供恢复。DeepSeek 当前真实页面没有归档项，固定使用“会话行菜单 → 删除 → 删除该对话”，确认当前会话链接已从侧栏消失后才关闭标签。删除是不可恢复操作，只有 DeepSeek 的显式清理策略会执行它。
+
+DeepSeek 每次发送前还会确认“专家模式”和“深度思考”均已开启；任一控件无法确认，当前 Provider 失败并按既定路由继续。调用 runner 时必须传入 `browserChannel: "chrome"`。
 
 ## 安全边界（摘要）
 
