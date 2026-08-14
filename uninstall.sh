@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="${HOME}/.codex/skills/agentchat-code-offload"
 ROUTING_SKILL_DIR="${HOME}/.agents/skills/luna-model-routing"
+REPO_EXECUTION_SKILL_DIR="${HOME}/.agents/skills/repo-execution"
 ADAPTER_DIR="${CODEX_CODE_OFFLOAD_HOME:-${HOME}/.local/share/codex-code-offload}"
 STATE_DIR="${HOME}/.local/state/codex-web-reasoning"
 
@@ -21,6 +22,7 @@ remove_link() {
 
 remove_link "${SKILL_DIR}"
 remove_link "${ROUTING_SKILL_DIR}"
+remove_link "${REPO_EXECUTION_SKILL_DIR}"
 remove_link "${ADAPTER_DIR}"
 
 if [ -d "${STATE_DIR}" ]; then

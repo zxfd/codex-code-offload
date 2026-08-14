@@ -8,6 +8,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="${HOME}/.codex/skills/agentchat-code-offload"
 ROUTING_SKILL_DIR="${HOME}/.agents/skills/luna-model-routing"
 ROUTING_SKILL_FILE="${ROUTING_SKILL_DIR}/SKILL.md"
+REPO_EXECUTION_SKILL_DIR="${HOME}/.agents/skills/repo-execution"
+REPO_EXECUTION_SKILL_FILE="${REPO_EXECUTION_SKILL_DIR}/SKILL.md"
 ADAPTER_DIR="${CODEX_CODE_OFFLOAD_HOME:-${HOME}/.local/share/codex-code-offload}"
 STATE_DIR="${HOME}/.local/state/codex-web-reasoning"
 
@@ -18,6 +20,7 @@ die() { printf '\n[install] ERROR: %s\n' "$*" >&2; exit 1; }
 log "Repo:    ${REPO_ROOT}"
 log "Skill:   ${SKILL_DIR}"
 log "Routing: ${ROUTING_SKILL_DIR}"
+log "Repo rules: ${REPO_EXECUTION_SKILL_DIR}"
 log "Adapter: ${ADAPTER_DIR}"
 log "State:   ${STATE_DIR}"
 
@@ -42,12 +45,18 @@ link_dir() {
 
 link_dir "${REPO_ROOT}/skill" "${SKILL_DIR}"
 link_dir "${REPO_ROOT}/skills/luna-model-routing" "${ROUTING_SKILL_DIR}"
+link_dir "${REPO_ROOT}/skills/repo-execution" "${REPO_EXECUTION_SKILL_DIR}"
 link_dir "${REPO_ROOT}/adapter" "${ADAPTER_DIR}"
 
 if [ ! -r "${ROUTING_SKILL_FILE}" ]; then
   die "Routing Skill entrypoint is not readable: ${ROUTING_SKILL_FILE}"
 fi
 log "Routing Skill entrypoint verified: ${ROUTING_SKILL_FILE}"
+
+if [ ! -r "${REPO_EXECUTION_SKILL_FILE}" ]; then
+  die "Repository execution Skill entrypoint is not readable: ${REPO_EXECUTION_SKILL_FILE}"
+fi
+log "Repository execution Skill entrypoint verified: ${REPO_EXECUTION_SKILL_FILE}"
 
 mkdir -p "${STATE_DIR}"
 log "State directory ready: ${STATE_DIR}"

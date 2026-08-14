@@ -1,0 +1,4 @@
+interface:
+  display_name: "仓库执行规范"
+  short_description: "Repository conventions for CodeGraph, Git, and file naming"
+  default_prompt: "Use $repo-execution to apply stable repository execution conventions."
