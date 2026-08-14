@@ -627,6 +627,13 @@ async function recoverRateLimitBeforeArchive({ tab }) {
   return { present: true, dismissed: false, acknowledgement: null };
 }
 
+export async function isChatGptAnswerGenerating({ tab }) {
+  const stopButtons = CHATGPT_STOP_GENERATION_LABELS.map(name => (
+    tab.playwright.getByRole('button', { name, exact: true })
+  ));
+  return (await Promise.all(stopButtons.map(locatorVisible))).some(Boolean);
+}
+
 export async function archiveConversation({ tab, provider, uiEvidence = false }) {
   const currentUrl = new URL(await tab.url());
   if (!currentUrl.pathname.startsWith('/c/')) {
@@ -718,6 +725,10 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
   const checkInterrupted = async () => {
     if (!await locatorVisible(rateLimitDialog(tab))) return;
     if (sendStarted) {
+      // A rate-limit dialog can coexist with an answer that is still being
+      // rendered. Keep waiting in that state; dismissing it can interrupt the
+      // active generation and turn a slow but valid response into a fallback.
+      if (await isChatGptAnswerGenerating({ tab })) return;
       if (answerRateLimitRecoveries < CHATGPT_STAGE_RECOVERY_RETRIES) {
         answerRateLimitRecoveries += 1;
         await recoverRateLimit({ tab });

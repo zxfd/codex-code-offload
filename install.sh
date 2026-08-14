@@ -7,6 +7,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="${HOME}/.codex/skills/agentchat-code-offload"
 ROUTING_SKILL_DIR="${HOME}/.agents/skills/luna-model-routing"
+ROUTING_SKILL_FILE="${ROUTING_SKILL_DIR}/SKILL.md"
 ADAPTER_DIR="${CODEX_CODE_OFFLOAD_HOME:-${HOME}/.local/share/codex-code-offload}"
 STATE_DIR="${HOME}/.local/state/codex-web-reasoning"
 
@@ -42,6 +43,11 @@ link_dir() {
 link_dir "${REPO_ROOT}/skill" "${SKILL_DIR}"
 link_dir "${REPO_ROOT}/skills/luna-model-routing" "${ROUTING_SKILL_DIR}"
 link_dir "${REPO_ROOT}/adapter" "${ADAPTER_DIR}"
+
+if [ ! -r "${ROUTING_SKILL_FILE}" ]; then
+  die "Routing Skill entrypoint is not readable: ${ROUTING_SKILL_FILE}"
+fi
+log "Routing Skill entrypoint verified: ${ROUTING_SKILL_FILE}"
 
 mkdir -p "${STATE_DIR}"
 log "State directory ready: ${STATE_DIR}"

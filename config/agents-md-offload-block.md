@@ -5,6 +5,10 @@
 或 `agentchat-code-offload` 的 Browser Adapter。详细阈值、Thread 生命周期、Provider UI 细节与
 多模态规则分别收进对应 Skill，避免全局规则堆叠。
 
+技能入口固定为 `${HOME}/.agents/skills/luna-model-routing/SKILL.md`；本仓库源文件为
+`skills/luna-model-routing/SKILL.md`。启动任务时先解析已声明的 Skill root（例如 `r1`）并完整读取该入口，
+不要把 `${HOME}/.codex/skills/luna-model-routing` 当作路由 Skill 路径；该目录属于另一套 Skill 根。
+
 ```markdown
 ## Luna 模型协作路由
 

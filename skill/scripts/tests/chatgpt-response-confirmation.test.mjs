@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   archiveConversation,
+  isChatGptAnswerGenerating,
   locateNewAssistantAnswer,
   waitForNextAssistantAnswer,
 } from '../providers/chatgpt-web.mjs';
@@ -177,6 +178,35 @@ test('ChatGPT archive cleanup fails closed when the rate-limit dialog cannot clo
     }),
     /conversation archive failed: conversation_more_control_not_found/,
   );
+});
+
+test('ChatGPT generation detection follows stop-generation button visibility', async () => {
+  const makeTab = visibleByName => ({
+    playwright: {
+      getByRole(_role, options = {}) {
+        const visible = Boolean(visibleByName[options.name]);
+        return {
+          async count() { return visible ? 1 : 0; },
+          first() { return { async isVisible() { return visible; } }; },
+        };
+      },
+    },
+  });
+
+  assert.equal(await isChatGptAnswerGenerating({
+    tab: makeTab({
+      '停止回答': true,
+      'Stop generating': false,
+      'Stop generating response': false,
+    }),
+  }), true);
+  assert.equal(await isChatGptAnswerGenerating({
+    tab: makeTab({
+      '停止回答': false,
+      'Stop generating': false,
+      'Stop generating response': false,
+    }),
+  }), false);
 });
 
 test('Web-LLM runner accepts only the user Chrome browser', () => {
