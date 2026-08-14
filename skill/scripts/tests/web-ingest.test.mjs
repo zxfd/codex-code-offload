@@ -40,7 +40,7 @@ function assertContains(filePath, substring, message) {
   return text;
 }
 
-test('Luna routing skill contract: mandatory single-URL pre-ingest and approved single-provider transfer', async () => {
+test('routing skill contract: mandatory single-URL pre-ingest and approved single-provider transfer', async () => {
   const skill = assertContains(SKILL_PATH, 'Mandatory URL ingestion gate for new Chrome tasks', 'missing URL gate section');
   const contract = assertContains(CONTRACT_PATH, 'url_preingest', 'missing url_preingest contract transport');
   assertContains(ROUTING_PATH, 'Single explicit `http`/`https` URL that requires opening a fresh Chrome task tab', 'missing routing matrix single URL row');
@@ -81,26 +81,41 @@ test('Luna routing skill contract: mandatory single-URL pre-ingest and approved 
   );
 });
 
-test('Spark routing docs default to xhigh as the highest supported thinking level', () => {
+test('routing docs enforce route-before-read and neutral coordinator wording', () => {
   const skill = readFileSync(SKILL_PATH, 'utf8');
+  const contract = readFileSync(CONTRACT_PATH, 'utf8');
   const routing = readFileSync(ROUTING_PATH, 'utf8');
 
-  assert.ok(skill.includes('`xhigh`'), 'missing Spark xhigh invocation in skill');
+  assert.ok(skill.includes('Route before reading task evidence'), 'missing route-before-read gate');
+  assert.ok(skill.includes('Command form is not an exemption.'), 'commands must not bypass read routing');
   assert.ok(
-    routing.includes('Spark `xhigh`'),
-    'routing matrix must mark Spark coding default as `xhigh`',
+    skill.includes('Do not read substantive task evidence and then delegate the same analysis.'),
+    'missing no-read-before-delegation rule',
+  );
+  assert.ok(contract.includes('do_not_read_in_coordinator'), 'missing coordinator read exclusion in packet');
+  assert.ok(
+    routing.includes('analysis_thread -> current_write'),
+    'missing split source-analysis and focused-write route',
   );
   assert.ok(
-    routing.includes('maximum supported Spark thinking level'),
-    'routing matrix must document xhigh as Spark maximum supported level',
+    skill.includes('This Skill does not grant, infer, duplicate, or relax approval.'),
+    'missing non-amplification approval boundary',
   );
+  assert.ok(skill.includes('`skill-creator`'), 'missing Skill lifecycle owner');
+  assert.ok(skill.includes('`repo-execution`'), 'missing repository execution owner');
+  assert.ok(skill.includes('each domain Skill'), 'missing domain approval owner');
 
-  assert.ok(!/Spark\s+`medium`/.test(skill), 'no Spark medium default should remain');
-  assert.ok(!/Spark\s+`medium`/.test(routing), 'no Spark medium default should remain');
-  assert.ok(!/Prefer `medium`/.test(skill), 'no Spark medium preference should remain');
-  assert.ok(!/use `high` only when the result has objective local checks/.test(skill), 'no Spark high preference should remain');
-  assert.ok(!/Spark: `medium` default/.test(routing), 'no Spark medium default should remain');
-  assert.ok(!/`high` only/.test(routing), 'no Spark high-only escalation should remain');
+  for (const staleWording of [
+    'fixed GPT-5.6-Luna main Agent',
+    'current Luna task',
+    'Luna owns',
+    'Luna Max',
+    'current_luna',
+  ]) {
+    assert.ok(!skill.includes(staleWording), `stale coordinator wording remains: ${staleWording}`);
+    assert.ok(!contract.includes(staleWording), `stale contract wording remains: ${staleWording}`);
+    assert.ok(!routing.includes(staleWording), `stale routing wording remains: ${staleWording}`);
+  }
 });
 
 function makeSignals({

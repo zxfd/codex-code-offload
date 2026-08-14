@@ -1,4 +1,4 @@
 interface:
-  display_name: "Luna 模型协作路由"
-  short_description: "Route Luna Max, Luna Medium, DeepSeek V4 Pro, and Web-LLM"
-  default_prompt: "Use $luna-model-routing to route this task through Luna Max, a separate Luna Medium Thread, DeepSeek V4 Pro, or Web-LLM."
+  display_name: "模型协作路由"
+  short_description: "在读取任务证据前完成分流，并协调 Web-LLM 与付费回退"
+  default_prompt: "使用 $luna-model-routing，在当前模型读取任务源码或长证据前完成分流，再依据有界回执实施和验收。"
