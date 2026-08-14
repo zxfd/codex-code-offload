@@ -36,7 +36,7 @@ Default to serial. Allow parallel dispatch only when Luna can state:
 - each branch has one acceptance artifact;
 - a declared reason parallel completion is worth the coordination cost.
 
-For verifier chains, use serial `producer -> verifier` when the verifier needs the producer output. Do not parallelize identical full-input analyses merely to spend Spark or another model's quota.
+For verifier chains, use serial `producer -> focused verifier` only when the verifier needs the producer output and a concrete claim remains unresolved. The verifier packet contains the conclusion, minimum evidence, diff/test result, and focused questions; it is not a second full-input analysis. Do not parallelize identical full-input analyses merely to spend Spark or another model's quota.
 
 When parallelism is justified and a branch selects Web-LLM, create one new Codex App Thread per branch. The Thread is the communication shell; its Browser Adapter Provider chain is still sequential and free-first.
 

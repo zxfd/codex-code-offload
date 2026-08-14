@@ -21,6 +21,16 @@ acceptance_criteria: how Luna will verify the result
 constraints: no child Workers, no external actions, preserve user changes
 ```
 
+For a verifier packet, add only:
+
+```text
+verification_scope: the exact claim or risk still unresolved
+verification_evidence: minimum conclusion, paths, diff, and test result needed to challenge it
+verification_questions: one to three falsifiable questions
+```
+
+Never repack the complete original input for verification unless Luna records why a specific missing fact requires it.
+
 For Web-LLM, the local adapter remains responsible for literal path validation, secret scanning, extraction, packing, and image policy. Do not paste credentials, cookies, tokens, broad repository context, or unrelated private data.
 
 ## Transport mapping

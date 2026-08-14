@@ -85,7 +85,9 @@ For `execution_mode: parallel`, every independent branch starts with its own Web
 
 Never move to editing or external execution while a required result is `unverified`, `rejected`, or `blocked`.
 
-For high-risk work, use one explicit verifier route after the primary result when independent evidence is useful. Do not replace local evidence with a vote between models.
+Verification is normally a focused Luna check, not a second model pass: inspect the cited paths, symbols, facts, diff, and relevant test output; confirm the modality and scope; and check that the fallback evidence really proves the preceding route failed. Do not resend the full source or rerun the same reasoning just to change the model.
+
+For high-risk work, add one verifier route only when a specific falsifiable claim remains unresolved after local checks. Give it the primary conclusion, the minimum supporting evidence, the current diff or test result, and one to three focused questions. Prefer a free Web-LLM verifier when external judgment is necessary; do not make V4 Pro a verifier by default. Skip the verifier when there is no unresolved claim. A verifier response is still evidence and never replaces Luna's local acceptance decision.
 
 ## Direct references
 
