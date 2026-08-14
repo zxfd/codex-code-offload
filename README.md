@@ -38,6 +38,7 @@ cd codex-code-offload
 `install.sh` 会把：
 
 - `skill/` 软链到 `~/.codex/skills/agentchat-code-offload/`
+- `skills/luna-model-routing/` 软链到 `~/.agents/skills/luna-model-routing/`
 - `adapter/` 软链到 `~/.local/share/codex-code-offload/`（可用 `CODEX_CODE_OFFLOAD_HOME` 覆盖）
 - 创建状态目录 `~/.local/state/codex-web-reasoning/`
 - 在 adapter 目录执行 `npm install` 安装 `repomix`
@@ -64,6 +65,7 @@ Codex 通过浏览器自动化驱动这些页面。登录状态、模型/强度�
 
 ```text
 skill/     Codex Skill（SKILL.md + 浏览器自动化脚本）
+skills/    协作型 Skill（Luna、内部模型 Thread 与 Web-LLM 路由）
 adapter/   本地打包与安全边界 Adapter（codex-agentchat-offload.mjs + providers.json）
 config/    全局 AGENTS.md 路由片段
 install.sh  一键安装（软链 + npm install）
@@ -85,4 +87,3 @@ uninstall.sh 卸载（仅移除软链与状态目录，不改动仓库文件）
 
 只会移除 `~/.codex/skills/agentchat-code-offload`、`~/.local/share/codex-code-offload` 两个软链和状态
 目录，仓库文件本身保留。
-
