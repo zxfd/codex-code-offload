@@ -1,4 +1,4 @@
-import { attachProviderImages } from '../media-upload.mjs';
+import { pasteProviderImages } from '../media-upload.mjs';
 
 import {
   captureSemanticUiEvidence,
@@ -611,7 +611,7 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
   let previousGroupCount = await assistantGroups.count();
   const input = await runChatGptStageWithRecovery({ tab, action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'pre_submit_recovery' }) });
   const attachmentState = imagePaths.length
-    ? await attachProviderImages({ tab, provider: 'ChatGPT', imagePaths })
+    ? await pasteProviderImages({ tab, provider: 'ChatGPT', imagePaths, composer: input })
     : null;
 
   const checkInterrupted = async () => {

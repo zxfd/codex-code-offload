@@ -1,4 +1,4 @@
-import { attachProviderImages } from '../media-upload.mjs';
+import { pasteProviderImages } from '../media-upload.mjs';
 
 import {
   captureSemanticUiEvidence,
@@ -74,6 +74,18 @@ async function firstVisibleNewChatControl(tab) {
   return null;
 }
 
+async function waitForSubmissionProof({ tab, composer, userMessages, previousUserMessageCount, timeoutMs = 15_000 }) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const composerText = String(await composer.evaluate(element => (
+      'value' in element ? element.value : (element.innerText || element.textContent || '')
+    ), undefined, { timeoutMs: 10_000 })).trim();
+    if (!composerText || await userMessages.count() > previousUserMessageCount) return true;
+    await tab.playwright.waitForTimeout(250);
+  }
+  return false;
+}
+
 async function ensureFreshConversation({ tab, uiEvidence }) {
   if (!await hasVisibleConversationMessages(tab)) return;
   try {
@@ -120,16 +132,28 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
       uiEvidence,
     });
   }
-  const attachmentState = imagePaths.length
-    ? await attachProviderImages({ tab, provider: 'Gemini', imagePaths })
-    : null;
   const answers = tab.playwright.locator('model-response');
   const previousAnswerCount = await answers.count();
+  const userMessages = tab.playwright.locator('user-query, user-query-content');
+  const previousUserMessageCount = await userMessages.count();
+  let attachmentState = null;
   const { promptRemoved } = await submitPromptFromFile({
     promptPath,
     submit: async promptText => {
       await composer.fill(promptText, { timeoutMs: 60_000 });
-      await composer.press('Enter', { timeoutMs: 30_000 });
+      if (imagePaths.length) {
+        attachmentState = await pasteProviderImages({ tab, provider: 'Gemini', imagePaths, composer });
+      }
+      const send = tab.playwright.getByRole('button', { name: /^(发送|Send)$/i });
+      if (await locatorVisible(send) && await send.first().isEnabled()) {
+        await send.first().click({ timeoutMs: 30_000 });
+      }
+      if (!await waitForSubmissionProof({ tab, composer, userMessages, previousUserMessageCount })) {
+        await composer.press('Enter', { timeoutMs: 30_000 });
+      }
+      if (!await waitForSubmissionProof({ tab, composer, userMessages, previousUserMessageCount })) {
+        throw new Error('Gemini prompt submission was not observed after one retry');
+      }
     },
   });
   const answer = answers.nth(previousAnswerCount);

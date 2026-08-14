@@ -4,8 +4,6 @@ import { homedir, tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import {
   ProviderUnavailableError,
-  attachUiEvidence,
-  consumeUiEvidenceArtifact,
   makeAttemptPrompt,
   removeUiEvidenceArtifact,
   removePrompt,
@@ -276,23 +274,11 @@ export async function runProviderFallback({
         // The adapter normally removes the attempt prompt immediately after submit.
       }
       const reason = String(error?.message || error).slice(0, 500);
-      let evidenceHandedOff = false;
+      let uiEvidenceDiscarded = false;
       if (uiEvidence && error?.uiEvidencePath) {
         try {
-          const hasPotentialFallback = route.priority
-            .slice(providerIndex + 1)
-            .some(candidateId => {
-              const candidate = config.providers[candidateId];
-              const entry = health.providers[candidateId];
-              if (entry) entry.current_target_signature = targetSignature(candidate);
-              return !isCoolingDown(entry, ttlMs, now);
-            });
-          if (hasPotentialFallback) {
-            promptText = attachUiEvidence(promptText, consumeUiEvidenceArtifact(error.uiEvidencePath));
-            evidenceHandedOff = true;
-          } else {
-            removeUiEvidenceArtifact(error.uiEvidencePath);
-          }
+          removeUiEvidenceArtifact(error.uiEvidencePath);
+          uiEvidenceDiscarded = true;
         } catch (evidenceError) {
           try {
             removeUiEvidenceArtifact(error.uiEvidencePath);
@@ -309,7 +295,7 @@ export async function runProviderFallback({
         target_signature: providerSignature,
       };
       writeHealth(stateDir, health);
-      attempts.push({ provider: providerId, status: 'unavailable', reason, ui_evidence_handed_off: evidenceHandedOff });
+      attempts.push({ provider: providerId, status: 'unavailable', reason, ui_evidence_discarded: uiEvidenceDiscarded });
       tabs.delete(tabKey);
       await closeTab(tab);
       // Web transport and extraction failures are provider-local for this request;

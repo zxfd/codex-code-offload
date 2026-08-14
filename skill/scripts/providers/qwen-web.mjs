@@ -1,4 +1,4 @@
-import { attachProviderImages } from '../media-upload.mjs';
+import { pasteProviderImages } from '../media-upload.mjs';
 
 import {
   captureSemanticUiEvidence,
@@ -240,20 +240,20 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
       modelNames: provider.target.models,
     });
   }
-  const attachmentState = imagePaths.length
-    ? await attachProviderImages({ tab, provider: 'Qwen', imagePaths })
-    : null;
-
   const answers = tab.playwright.locator('.response-message-content.phase-answer');
   const previousAnswerCount = await answers.count();
   const userMessages = tab.playwright.locator('.user-message-content, [class*="user-message-content"]');
   const previousUserMessageCount = await userMessages.count();
+  let attachmentState = null;
   let promptRemoved;
   try {
     ({ promptRemoved } = await submitPromptFromFile({
       promptPath,
       submit: async promptText => {
         await composer.fill(promptText, { timeoutMs: 60_000 });
+        if (imagePaths.length) {
+          attachmentState = await pasteProviderImages({ tab, provider: 'Qwen', imagePaths, composer });
+        }
         const settleTimeoutMs = composerSettleTimeout(promptText.length);
         let send = await waitForSendReady(tab, settleTimeoutMs);
         await send.click({ timeoutMs: 30_000 });
