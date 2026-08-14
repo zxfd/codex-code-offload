@@ -148,15 +148,15 @@ The gateway uses `pdftotext -layout` for PDF and macOS `textutil` for DOCX/RTF. 
 
 ### Default OCR and image-reasoning path
 
-The generic runner does not yet own media upload. For an eligible image request, use connected Chrome directly and apply the configured multimodal Provider order sequentially:
+The media-aware runner owns image upload for the configured multimodal route. For an eligible image request, pass the minimum approved image set and apply the configured Provider order sequentially:
 
 1. Select the minimum approved image set under the policy above and keep its absolute paths out of prompts and logs.
-2. Open a fresh task-isolated Provider tab, confirm login and the configured multimodal-capable model, then attach the images through the visible upload control.
-3. Confirm visible attachment readiness by preview, filename, or attachment count before submitting the generated prompt. Do not expose packed source or prompt bodies to Codex merely to perform the upload.
+2. Open a fresh task-isolated Provider tab, confirm login and the configured multimodal-capable model, then attach the images through the fixed visible upload control and `filechooser` flow.
+3. Require file-count plus visible attachment evidence (preview, filename, or attachment count) before submitting the generated prompt. Do not expose packed source or prompt bodies to Codex merely to perform the upload.
 4. Read the completed answer and verify it cites at least one concrete, locally checkable visual fact. If attachment readiness or visual grounding cannot be proved, mark that Provider unavailable and continue to the next one with the same approved image set.
 5. If all external Providers fail, return to local handling. Do not submit a text-only substitute and label it multimodal.
 
-Use `requestMetadata.modality = 'multimodal'` for routing and event classification only. Until a media-aware runner contract is implemented and tested, do not call `runProviderFallback` alone as proof that images were transmitted.
+Use `requestMetadata.modality = 'multimodal'` together with `imagePaths: ['/absolute/path/to/image.png']`. The runner rejects missing images, reuses only the approved set on fallback, and accepts a Provider only when it returns `attachmentsReady: true`; a text-only response cannot be recorded as multimodal success.
 
 For the generic text route, read `BROWSER_PROMPT_FILE` and `OFFLOAD_REQUEST_FILE` from the command output. Open the provider only through connected Chrome and run the generic runner. The browser connection must follow the Chrome Browser Skill first.
 
@@ -173,8 +173,9 @@ const result = await runProviderFallback({
     packed_files: <files_count>,
     estimated_external_tokens: <estimated_tokens>,
     context_rounds: 1,
-    modality: 'text', // the generic runner is currently text-only
+    modality: 'text',
   },
+  imagePaths: [], // use task-scoped absolute PNG/JPEG/WebP paths for multimodal requests
   tabs: globalThis.webReasoningTabs,
   uiEvidence: true,
 });

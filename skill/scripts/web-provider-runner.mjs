@@ -11,6 +11,7 @@ import {
   removePrompt,
   validatePromptPath,
 } from './provider-utils.mjs';
+import { validateImagePaths } from './media-upload.mjs';
 
 const OFFLOAD_HOME = (typeof process !== 'undefined' && process.env && process.env.CODEX_CODE_OFFLOAD_HOME) || join(homedir(), '.local', 'share', 'codex-code-offload');
 const DEFAULT_CONFIG_PATH = join(OFFLOAD_HOME, 'providers.json');
@@ -163,10 +164,10 @@ async function closeTab(tab) {
   }
 }
 
-export async function runWebProvider({ providerId, provider, tab, promptPath, timeoutMs, continuation = false, uiEvidence = false }) {
+export async function runWebProvider({ providerId, provider, tab, promptPath, timeoutMs, continuation = false, uiEvidence = false, imagePaths = [] }) {
   const module = await importAdapter(provider.adapter);
   if (typeof module.run !== 'function') throw new Error(`provider adapter has no run(): ${provider.adapter}`);
-  return module.run({ providerId, provider, tab, promptPath, timeoutMs, continuation, uiEvidence });
+  return module.run({ providerId, provider, tab, promptPath, timeoutMs, continuation, uiEvidence, imagePaths });
 }
 
 export async function runProviderFallback({
@@ -179,10 +180,14 @@ export async function runProviderFallback({
   timeoutMs = 180_000,
   tabs = new Map(),
   uiEvidence = false,
+  imagePaths = [],
 }) {
   if (!browser?.tabs?.new) throw new Error('a controlled Browser is required');
   const config = loadProviderConfig(configPath);
   const route = resolveProviderRoute(config, requestMetadata);
+  const mediaFiles = validateImagePaths(imagePaths);
+  if (route.modality === 'multimodal' && mediaFiles.length === 0) throw new Error('multimodal Web Reasoning requires at least one image');
+  if (route.modality !== 'multimodal' && mediaFiles.length > 0) throw new Error('imagePaths are only allowed on the multimodal route');
   const requestId = requestMetadata.request_id || randomUUID();
   const continuation = Number(requestMetadata.context_rounds || 1) > 1;
   const source = validatePromptPath(promptPath);
@@ -231,7 +236,9 @@ export async function runProviderFallback({
         timeoutMs,
         continuation,
         uiEvidence,
+        imagePaths: mediaFiles,
       });
+      if (route.modality === 'multimodal' && result.attachmentsReady !== true) throw new Error('provider did not confirm image attachments are ready');
       health.providers[providerId] = { status: 'available', last_success: new Date().toISOString(), target_signature: providerSignature };
       writeHealth(stateDir, health);
       attempts.push({ provider: providerId, status: 'success' });
@@ -245,6 +252,7 @@ export async function runProviderFallback({
         estimated_external_tokens: requestMetadata.estimated_external_tokens,
         context_rounds: requestMetadata.context_rounds || 1,
         modality: route.modality,
+        image_count: mediaFiles.length,
         result_length: result.answer.length,
         success: true,
       };
@@ -257,6 +265,7 @@ export async function runProviderFallback({
         ...result,
         providerId,
         modality: route.modality,
+        imageCount: mediaFiles.length,
         providerAttempts: attempts,
         requestId,
       };
@@ -318,6 +327,7 @@ export async function runProviderFallback({
       estimated_external_tokens: requestMetadata.estimated_external_tokens,
       context_rounds: requestMetadata.context_rounds || 1,
       modality: route.modality,
+      image_count: mediaFiles.length,
       result_length: 0,
       success: false,
       local_fallback: true,
@@ -327,6 +337,7 @@ export async function runProviderFallback({
       provider: 'local',
       localFallback: true,
       modality: route.modality,
+      imageCount: mediaFiles.length,
       providerAttempts: attempts,
       requestId,
     };

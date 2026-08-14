@@ -1,3 +1,5 @@
+import { attachProviderImages } from '../media-upload.mjs';
+
 import {
   captureSemanticUiEvidence,
   locatorVisible,
@@ -94,7 +96,7 @@ async function ensureFreshConversation({ tab, uiEvidence }) {
   }
 }
 
-export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false }) {
+export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false, imagePaths = [] }) {
   if (!tab?.playwright || typeof tab.url !== 'function') throw new Error('a controlled Chrome tab is required');
   const currentUrl = new URL(await tab.url());
   if (!continuation || currentUrl.hostname !== 'gemini.google.com') {
@@ -118,6 +120,9 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
       uiEvidence,
     });
   }
+  const attachmentState = imagePaths.length
+    ? await attachProviderImages({ tab, provider: 'Gemini', imagePaths })
+    : null;
   const answers = tab.playwright.locator('model-response');
   const previousAnswerCount = await answers.count();
   const { promptRemoved } = await submitPromptFromFile({
@@ -137,6 +142,7 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
     provider: 'Gemini',
     mode: provider.target.mode || 'current',
     promptRemoved,
+    attachmentsReady: imagePaths.length > 0 ? attachmentState.ready : null,
     answer: text,
   };
 }

@@ -1,3 +1,5 @@
+import { attachProviderImages } from '../media-upload.mjs';
+
 import {
   captureSemanticUiEvidence,
   locatorVisible,
@@ -587,7 +589,7 @@ async function waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs, 
   });
 }
 
-export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false }) {
+export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false, imagePaths = [] }) {
   if (!tab?.playwright || typeof tab.url !== 'function') throw new Error('a controlled Browser tab is required');
   const currentUrl = new URL(await tab.url());
   if (!continuation || currentUrl.hostname !== 'chatgpt.com') {
@@ -608,6 +610,9 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
   const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');
   let previousGroupCount = await assistantGroups.count();
   const input = await runChatGptStageWithRecovery({ tab, action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'pre_submit_recovery' }) });
+  const attachmentState = imagePaths.length
+    ? await attachProviderImages({ tab, provider: 'ChatGPT', imagePaths })
+    : null;
 
   const checkInterrupted = async () => {
     if (!await locatorVisible(rateLimitDialog(tab))) return;
@@ -653,6 +658,7 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
     reasoningSelectionSource: selectedReasoning.selectionSource,
     modelVerified: selectedReasoning.modelVerified,
     promptRemoved,
+    attachmentsReady: imagePaths.length > 0 ? attachmentState.ready : null,
     answer: text,
   };
 }
