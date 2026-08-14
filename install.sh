@@ -58,6 +58,23 @@ if [ ! -r "${REPO_EXECUTION_SKILL_FILE}" ]; then
 fi
 log "Repository execution Skill entrypoint verified: ${REPO_EXECUTION_SKILL_FILE}"
 
+SKILL_INTEGRITY_CHECK="${REPO_EXECUTION_SKILL_DIR}/scripts/verify-installed-skill.mjs"
+if [ ! -r "${SKILL_INTEGRITY_CHECK}" ]; then
+  die "Skill integrity checker is not readable: ${SKILL_INTEGRITY_CHECK}"
+fi
+node "${SKILL_INTEGRITY_CHECK}" \
+  --source "${REPO_ROOT}/skills/repo-execution" \
+  --installed "${REPO_EXECUTION_SKILL_DIR}" \
+  || die "Repository execution Skill install integrity check failed"
+node "${SKILL_INTEGRITY_CHECK}" \
+  --source "${REPO_ROOT}/skills/luna-model-routing" \
+  --installed "${ROUTING_SKILL_DIR}" \
+  || die "Routing Skill install integrity check failed"
+node "${ROUTING_SKILL_DIR}/scripts/health-check.mjs" \
+  --root "${ROUTING_SKILL_DIR}" \
+  || die "Routing Skill runtime entry health check failed"
+log "Installed Skill resources and runtime entries verified"
+
 mkdir -p "${STATE_DIR}"
 log "State directory ready: ${STATE_DIR}"
 

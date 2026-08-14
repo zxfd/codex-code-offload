@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { runLunaModelRoutingHealthCheck } from '../health-check.mjs';
 
@@ -44,6 +46,17 @@ test('health check fails when browser-client-entry is missing', async () => {
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
+});
+
+test('health check executes when invoked through a symlinked script path', () => {
+  const { fixtureRoot, skillRoot } = makeFixture();
+  try {
+    const linkedCli = join(fixtureRoot, 'health-check.mjs');
+    symlinkSync(fileURLToPath(new URL('../health-check.mjs', import.meta.url)), linkedCli);
+    const result = spawnSync(process.execPath, [linkedCli, '--root', skillRoot], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /global skill health check PASS/);
+  } finally { rmSync(fixtureRoot, { recursive: true, force: true }); }
 });
 
 test('health check fails when forwarding uses an absolute path', async () => {

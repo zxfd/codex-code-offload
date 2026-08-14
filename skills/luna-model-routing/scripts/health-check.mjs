@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -154,7 +154,16 @@ export async function runLunaModelRoutingHealthCheck({ skillRoot = DEFAULT_GLOBA
   return report;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   const report = await runLunaModelRoutingHealthCheck(parseCliArgs());
   for (const check of report.checks) {
     const remediation = check.remediation ? ` (${check.remediation})` : '';
