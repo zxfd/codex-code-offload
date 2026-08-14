@@ -24,7 +24,12 @@ Apply these stable repository conventions. Let more specific project rules and p
 - Before a commit, inspect the task-relevant diff, run the smallest sufficient verification, stage only task files or hunks, and confirm that the commit is non-empty and free of unrelated changes.
 - Make a separate commit only for a key, independently verifiable unit. Do not commit mechanically after minor edits or split solely to reach a commit count.
 - Use Conventional Commit / Angular-style subjects by default: `type(scope): 中文概要`.
-- Create local commits when appropriate. Do not push, force-push, publish a branch, or otherwise write remotely without explicit user authorization.
+- Create local commits when appropriate. Every completed local commit must be pushed immediately to the configured upstream branch (`HEAD` -> `@{u}`) as part of the standard flow.
+- Keep the pre-commit checks above unchanged.
+- Do not perform force-push, publish non-target branches, or any unrelated remote action.
+- If no upstream is configured, stop and report the failure with the branch context; do not continue.
+- After push, verify success by comparing `git rev-parse HEAD` with `git rev-parse @\{u\}` and report the result.
+- If push fails, stop and report the failure; do not attempt unrelated recovery actions in-place.
 
 ## File and directory names
 
