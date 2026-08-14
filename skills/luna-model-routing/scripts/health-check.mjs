@@ -111,7 +111,7 @@ export async function runLunaModelRoutingHealthCheck({ skillRoot = DEFAULT_GLOBA
     if (!existsSync(filePath)) {
       addCheck(report, {
         name: `entry:${entry}`, status: 'fail', message: `required entry module missing: ${entry}`,
-        remediation: `Create ${entry} as a portable forwarding module (relative import) into skill/scripts/${policy.forwardTargetName}.`,
+        remediation: `Create ${entry} as a portable forwarding module (relative import) into skills/web-ingest/scripts/${policy.forwardTargetName}.`,
         detail: { filePath, required: true },
       });
       continue;
@@ -136,7 +136,7 @@ export async function runLunaModelRoutingHealthCheck({ skillRoot = DEFAULT_GLOBA
     if (missingExports.length > 0) {
       addCheck(report, {
         name: `exports:${entry}`, status: 'fail', message: `missing exports in ${entry}: ${missingExports.join(', ')}`,
-        remediation: `Keep forwarding module signature compatible with underlying skill/scripts/${policy.forwardTargetName}.`,
+      remediation: `Keep forwarding module signature compatible with underlying skills/web-ingest/scripts/${policy.forwardTargetName}.`,
         detail: { missingExports },
       });
       continue;

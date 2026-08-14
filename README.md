@@ -9,7 +9,9 @@
 ```text
 Codex Desktop
   -> 全局 AGENTS.md 路由判断（可选）
-  -> agentchat-code-offload Skill（本仓库 skill/）
+  -> web-ingest standalone Skill（本仓库 skills/web-ingest/，先做本地页面预摄取）
+  -> agentchat-code-offload 组合 Skill（本仓库 skill/，兼容入口并注入历史 Provider runner）
+  -> Luna model-routing Skill（本仓库 skills/luna-model-routing/，只负责 Thread 路由）
   -> codex-agentchat-offload Adapter（本仓库 adapter/，调用 repomix 打包）
   -> 临时 BROWSER_PROMPT_FILE + OFFLOAD_REQUEST_FILE
   -> web-provider-runner（本仓库 skill/scripts/）
@@ -38,6 +40,7 @@ cd codex-code-offload
 `install.sh` 会把：
 
 - `skill/` 软链到 `~/.codex/skills/agentchat-code-offload/`
+- `skills/web-ingest/` 软链到 `~/.agents/skills/web-ingest/`
 - `skills/luna-model-routing/` 软链到 `~/.agents/skills/luna-model-routing/`
 - `skills/repo-execution/` 软链到 `~/.agents/skills/repo-execution/`
 - `adapter/` 软链到 `~/.local/share/codex-code-offload/`（可用 `CODEX_CODE_OFFLOAD_HOME` 覆盖）
@@ -45,6 +48,8 @@ cd codex-code-offload
 - 在 adapter 目录执行 `npm install` 安装 `repomix`
 
 所有源码路径均基于 `$HOME` 计算，不依赖本机用户名；换一台机器克隆后直接 `./install.sh` 即可。
+
+安装脚本会先拒绝覆盖已存在的非任务实体或指向其他目标的软链，再对 standalone Skill 执行完整性校验和本地健康检查。目标已存在且无法确认归属时保持原状并中止。
 
 ## 浏览器登录（一次性、手动）
 
@@ -62,6 +67,24 @@ Codex 通过浏览器自动化驱动这些页面。登录状态、模型/强度�
 把 `config/agents-md-offload-block.md` 中的片段合并到你的全局 `AGENTS.md`，Codex 就会在大型分析任务
 上默认走本网关；不合并时仍可手动按 `skill/SKILL.md` 调用。
 
+## 三个 Skill 的边界
+
+- `skills/web-ingest/` 是网站无关的 standalone Skill：只接受单个 URL，负责本地文本/视觉信号、同源重定向、隐私阻断、临时工件、审批状态、`NEED_MORE_CONTEXT` 和清理。它不选择具体 Provider，不包含网站选择器，也不静态依赖 `web-provider-runner.mjs`。
+- `skill/` 是 agentchat 组合 Skill 的历史入口。其 `skill/scripts/web-ingest.mjs` 转发到 standalone 核心，并仅为未显式提供 `runProvider` 的旧调用注入历史 fallback。
+- `skills/luna-model-routing/` 是 Thread-only 路由 Skill；其摄取入口只转发到 standalone 核心，健康检查不打开浏览器、不访问网站、不调用 Provider。
+
+典型检查：
+
+```sh
+node /Users/gin/.agents/skills/web-ingest/scripts/health-check.mjs \
+  --root /Users/gin/.agents/skills/web-ingest
+node /Users/gin/.agents/skills/repo-execution/scripts/verify-installed-skill.mjs \
+  --source "$PWD/skills/web-ingest" \
+  --installed /Users/gin/.agents/skills/web-ingest
+```
+
+standalone 默认只做本地预摄取。只有调用方取得针对当前页面数据和一个具名 Provider 的明确审批，并显式注入 `runProvider`、设置 `allowExternalTransfer: true` 后，才会把有界工件交给 Provider；审批不会自动转移或触发 fallback。
+
 ## 目录结构
 
 ```text
@@ -71,6 +94,7 @@ adapter/   本地打包与安全边界 Adapter（codex-agentchat-offload.mjs + p
 config/    全局 AGENTS.md 路由片段
 install.sh  一键安装（软链 + npm install）
 uninstall.sh 卸载（仅移除软链与状态目录，不改动仓库文件）
+```
 
 ## ChatGPT 响应确认
 
@@ -107,5 +131,4 @@ DeepSeek 每次发送前还会确认“专家模式”和“深度思考”均�
 ./uninstall.sh
 ```
 
-只会移除 `~/.codex/skills/agentchat-code-offload`、`~/.local/share/codex-code-offload` 两个软链和状态
-目录，仓库文件本身保留。
+只会移除指向本仓库目标的 Skill/Adapter 软链（包括 `~/.agents/skills/web-ingest`）和状态目录；非软链实体、指向其他目标的软链均保留，仓库文件本身不改动。

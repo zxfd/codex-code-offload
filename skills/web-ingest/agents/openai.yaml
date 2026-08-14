@@ -1,0 +1,4 @@
+interface:
+  display_name: "通用页面摄取"
+  short_description: "安全摄取单页文本与视觉信号，并在外传前执行隐私与审批控制"
+  default_prompt: "使用 $web-ingest 对一个明确授权的 URL 做本地预摄取并按审批边界处理上下文。"

@@ -6,6 +6,7 @@ set -euo pipefail
 # always lives under ~/.codex/skills/agentchat-code-offload.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="${HOME}/.codex/skills/agentchat-code-offload"
+WEB_INGEST_SKILL_DIR="${HOME}/.agents/skills/web-ingest"
 ROUTING_SKILL_DIR="${HOME}/.agents/skills/luna-model-routing"
 ROUTING_SKILL_FILE="${ROUTING_SKILL_DIR}/SKILL.md"
 REPO_EXECUTION_SKILL_DIR="${HOME}/.agents/skills/repo-execution"
@@ -19,6 +20,7 @@ die() { printf '\n[install] ERROR: %s\n' "$*" >&2; exit 1; }
 
 log "Repo:    ${REPO_ROOT}"
 log "Skill:   ${SKILL_DIR}"
+log "Web ingest: ${WEB_INGEST_SKILL_DIR}"
 log "Routing: ${ROUTING_SKILL_DIR}"
 log "Repo rules: ${REPO_EXECUTION_SKILL_DIR}"
 log "Adapter: ${ADAPTER_DIR}"
@@ -44,6 +46,7 @@ link_dir() {
 }
 
 link_dir "${REPO_ROOT}/skill" "${SKILL_DIR}"
+link_dir "${REPO_ROOT}/skills/web-ingest" "${WEB_INGEST_SKILL_DIR}"
 link_dir "${REPO_ROOT}/skills/luna-model-routing" "${ROUTING_SKILL_DIR}"
 link_dir "${REPO_ROOT}/skills/repo-execution" "${REPO_EXECUTION_SKILL_DIR}"
 link_dir "${REPO_ROOT}/adapter" "${ADAPTER_DIR}"
@@ -70,9 +73,16 @@ node "${SKILL_INTEGRITY_CHECK}" \
   --source "${REPO_ROOT}/skills/luna-model-routing" \
   --installed "${ROUTING_SKILL_DIR}" \
   || die "Routing Skill install integrity check failed"
+node "${SKILL_INTEGRITY_CHECK}" \
+  --source "${REPO_ROOT}/skills/web-ingest" \
+  --installed "${WEB_INGEST_SKILL_DIR}" \
+  || die "Standalone web-ingest Skill install integrity check failed"
 node "${ROUTING_SKILL_DIR}/scripts/health-check.mjs" \
   --root "${ROUTING_SKILL_DIR}" \
   || die "Routing Skill runtime entry health check failed"
+node "${WEB_INGEST_SKILL_DIR}/scripts/health-check.mjs" \
+  --root "${WEB_INGEST_SKILL_DIR}" \
+  || die "Standalone web-ingest Skill runtime entry health check failed"
 log "Installed Skill resources and runtime entries verified"
 
 mkdir -p "${STATE_DIR}"

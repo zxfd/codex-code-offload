@@ -8,6 +8,9 @@ import {
   captureVisualArtifacts,
   ingestSingleUrlWithLocalContext,
 } from '../web-ingest.mjs';
+import {
+  ingestSingleUrlWithLocalContext as ingestCanonical,
+} from '../../../skills/web-ingest/scripts/web-ingest.mjs';
 
 function makeTab({ finalUrl = 'https://example.com/page' } = {}) {
   const events = [];
@@ -495,6 +498,74 @@ test('ingestion defaults to local-first text route with no external transfer', a
   });
   assert.equal(response.status, 'requires_user_approval');
   assert.equal(runProviderCalls, 0);
+  assert.equal(response.externalTransfer, null);
+});
+
+test('canonical ingestion performs local pre-ingest without a Provider', async () => {
+  const tab = makeTab();
+  let providerCalls = 0;
+  const response = await ingestCanonical({
+    url: 'https://example.com/page',
+    objective: 'read summary',
+    browser: { tabs: { new: async () => tab } },
+    openBrowserTab: async () => tab,
+    extractSignals: async () => makeSignals({ visibleText: 'local only' }),
+    runProvider: async () => { providerCalls += 1; },
+  });
+  assert.equal(response.status, 'requires_user_approval');
+  assert.equal(providerCalls, 0);
+  assert.equal(response.externalTransfer, null);
+});
+
+test('canonical ingestion fails closed when external transfer has no explicit Provider', async () => {
+  const tab = makeTab();
+  const response = await ingestCanonical({
+    url: 'https://example.com/page',
+    objective: 'read summary',
+    processingPolicy: { allowExternalTransfer: true },
+    browser: { tabs: { new: async () => tab } },
+    openBrowserTab: async () => tab,
+    extractSignals: async () => makeSignals({ visibleText: 'local only' }),
+  });
+  assert.equal(response.status, 'failed');
+  assert.match(response.result.error, /explicit runProvider/);
+  assert.equal(response.cleanup.captureArtifactsRemoved, true);
+});
+
+test('canonical ingestion injects only the explicitly supplied fake Provider', async () => {
+  const tab = makeTab();
+  let providerCalls = 0;
+  const response = await ingestCanonical({
+    url: 'https://example.com/page',
+    objective: 'read summary',
+    processingPolicy: { allowExternalTransfer: true },
+    browser: { tabs: { new: async () => tab } },
+    openBrowserTab: async () => tab,
+    extractSignals: async () => makeSignals({ visibleText: 'provider test' }),
+    runProvider: async () => {
+      providerCalls += 1;
+      return { provider: 'FakeProvider', model: 'FakeModel', answer: 'done' };
+    },
+  });
+  assert.equal(response.status, 'completed');
+  assert.equal(providerCalls, 1);
+  assert.equal(response.externalTransfer.provider, 'FakeProvider');
+});
+
+test('legacy entry keeps its default Provider fallback injection boundary', async () => {
+  const legacySource = readFileSync(join(REPO_ROOT, 'skill', 'scripts', 'web-ingest.mjs'), 'utf8');
+  assert.match(legacySource, /runProviderFallback/u);
+  assert.match(legacySource, /options\.runProvider === undefined/u);
+
+  const tab = makeTab();
+  const response = await ingestSingleUrlWithLocalContext({
+    url: 'https://example.com/page',
+    objective: 'read summary',
+    browser: { tabs: { new: async () => tab } },
+    openBrowserTab: async () => tab,
+    extractSignals: async () => makeSignals({ visibleText: 'legacy local only' }),
+  });
+  assert.equal(response.status, 'requires_user_approval');
   assert.equal(response.externalTransfer, null);
 });
 
