@@ -25,7 +25,9 @@
 
 每个矩阵行的 `owner` 只是逻辑职责名。执行前必须为它一对一创建后台 `Codex App Thread`，并确认真实 `threadId` 与 `hostId`；只有真实双标识都可解析时才算成功。`clientThreadId` 只能表示准备中，必须先解析为真实 Thread，不能传给要求 `threadId` 的工具，也不能交由协调 Agent 接管。
 
-仓库任务创建前，先用 `codex_app__list_projects` 按当前项目绝对路径选择项目记录；创建时必须使用 `target.type=project`、匹配的 `target.projectId` 和 `target.environment.type=local`。不得使用 `projectless`、聊天或 `chatgptWorkCloud` 目标。初始 prompt 必须标记 `TASK_KIND: work_task`，明确这是工作任务；Git 项目按 `isGitRepository` 使用本地 `worktree`（默认）或 `local`。
+仓库任务必须绑定发起调用所在的本地项目。任务包强制携带 `caller_project_id` 与 `caller_project_path`；跨项目调用必须携带调用方项目的这两个字段，不能让协调窗口项目接管归属。先用 `codex_app__list_projects` 按规范化绝对路径精确匹配 `caller_project_path`，并确认返回 `projectId` 与 `caller_project_id` 相同；缺失、无法解析、无精确匹配、项目类型不符或调用方与 Thread 项目不一致时 `fail-closed`，不创建、不运行、不验收。
+
+创建时必须使用 `target.type=project`、匹配调用方的 `target.projectId` 和 `target.environment.type=local`。明确禁止 `projectless`、`chatgptWorkCloud`、聊天目标和无项目目标。初始 prompt 必须标记 `TASK_KIND: work_task`，明确这是工作任务；Git 项目按调用方记录的 `isGitRepository` 使用本地 `worktree`（默认）或 `local`。创建后先确认真实 `threadId`、`hostId` 及 Thread 项目身份，再进入等待、读取、验收和归档生命周期。
 
 仓库任务固定执行：
 

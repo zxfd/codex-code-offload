@@ -42,17 +42,28 @@ description: 强制把当前会话限制为控制面，并把源码、文件、�
 
 ### 创建前硬约束
 
-创建仓库 Worker Thread 前，必须先用 `codex_app__list_projects` 选择与当前本地项目绝对路径匹配的项目记录；不得凭项目名猜测，也不得选择无项目的 `projectless`、聊天或 ChatGPT Work 云端目标。
+每次仓库任务都必须先绑定“发起调用所在的本地项目”，而不是协调窗口、父任务或当前聊天窗口所在的项目。任务包必须携带调用方项目的两个不可替代字段：
+
+```text
+caller_project_id = <发起调用方项目的 projectId>
+caller_project_path = <发起调用方项目的绝对路径引用>
+```
+
+调用方来自其他项目时，必须原样传递该调用方的 `projectId` 和项目路径引用；协调 Agent 不得用自己的项目、父任务项目、项目名或历史路由结果替换它。缺少任一字段、字段无法解析，或无法由 `codex_app__list_projects` 返回记录按规范化绝对路径精确匹配时，必须 `fail-closed`，不得创建 Thread。
+
+创建仓库 Worker Thread 前，必须先用 `codex_app__list_projects` 选择与 `caller_project_path` 精确匹配且 `projectId` 等于 `caller_project_id` 的项目记录；不得凭项目名猜测，也不得选择无项目的 `projectless`、聊天或 ChatGPT Work 云端目标。
 
 创建必须使用项目型本地目标，等价于：
 
 ```text
 target.type = project
-target.projectId = <list_projects 返回且与当前项目路径匹配的 projectId>
+target.projectId = <list_projects 返回且与 caller_project_path 匹配的 caller_project_id>
 target.environment.type = local
 ```
 
-任务包的初始 prompt 必须明确 `TASK_KIND: work_task`，并写明仓库路径、允许范围和验收条件；不得使用“聊天”“chat”或其他仅会话语义替代工作任务。若项目是 Git 仓库，遵循 `list_projects` 返回的 `isGitRepository` 规则选择 `worktree`，否则使用 `local`；两者都必须保持在选定项目的本地环境内。
+任务包的初始 prompt 必须明确 `TASK_KIND: work_task`，并写明调用方仓库路径、允许范围和验收条件；不得使用“聊天”“chat”或其他仅会话语义替代工作任务。若项目是 Git 仓库，遵循调用方项目记录的 `isGitRepository` 规则选择 `worktree`，否则使用 `local`；两者都必须保持在调用方项目的本地环境内。
+
+创建返回后，必须在进入等待和读取前确认真实 `threadId`、`hostId`，并核对 Thread 返回的项目身份与 `caller_project_id`、`caller_project_path` 一致。项目类型不是 `project`、环境不是 `local`、项目 ID 缺失或不一致、项目路径无法解析或不一致，均为 `fail-closed`；不得在错误归属 Thread 中运行、验收或把它当作成功结果。
 
 仓库任务需要路由时，严格按以下顺序执行，不得跳过、替换或插入非 Thread 载体：
 

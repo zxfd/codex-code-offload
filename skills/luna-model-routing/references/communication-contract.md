@@ -36,6 +36,8 @@ model: 当前 Thread 使用的模型 ID
 model_source: codex_internal | web_provider
 thinking: 当前 Thread 的推理强度
 scope: 允许处理的目标、路径、URL、系统和时间边界
+caller_project_id: 发起调用所在本地项目的精确 projectId；跨项目调用必须由调用方传入
+caller_project_path: 发起调用所在本地项目的绝对路径引用；不得使用协调窗口项目路径替代
 inputs_by_reference: Worker 自行读取的字面路径、URL、消息引用或前序 output_ref
 owned_paths: read-only | 明确可写路径列表 | none
 approval_source: none | user_message_ref | domain_skill_managed | named_provider_approval_ref
@@ -72,15 +74,19 @@ constraints: Thread、外部传输、提交、推送、删除、发布和其他�
 
 ### 项目型本地创建约束
 
-仓库 Worker Thread 的创建参数必须绑定当前本地项目，而不是聊天或云端目标。协调 Agent 必须先调用 `codex_app__list_projects`，按当前项目的绝对路径核对返回记录后，才可使用该记录的 `projectId` 创建 Thread。创建参数必须满足：
+仓库 Worker Thread 的唯一归属是发起调用所在的本地项目，而不是协调窗口、父任务或当前聊天窗口所在的项目。每个仓库任务包必须包含 `caller_project_id` 与 `caller_project_path`；其他项目调用本 Skill 时，调用方必须把这两个字段连同任务包传递。协调 Agent 不得自行填充、猜测、改写或回退到自己的项目。
+
+协调 Agent 必须先调用 `codex_app__list_projects`，按规范化绝对路径精确匹配 `caller_project_path`，并确认返回记录的 `projectId` 精确等于 `caller_project_id`，才可创建 Thread。项目 ID 缺失、路径缺失、无法解析、无精确匹配、返回项目类型不符或调用方项目与待创建 Thread 项目不一致时，必须 `fail-closed`，不得创建、运行或验收该 Thread。创建参数必须满足：
 
 ```text
 target.type = project
-target.projectId = <与当前本地项目绝对路径匹配的 projectId>
+target.projectId = <与 caller_project_path 精确匹配的 caller_project_id>
 target.environment.type = local
 ```
 
-不得使用 `target.type=projectless` 或 `target.type=chatgptWorkCloud`。初始 prompt 必须包含 `TASK_KIND: work_task`，并将目标描述为可验收的工作任务；不得把新 Thread 创建成聊天。Git 项目仍按 `list_projects.isGitRepository` 选择 `worktree`（默认）或 `local`，但不能离开选定项目的本地环境。
+明确禁止 `target.type=projectless`、`target.type=chatgptWorkCloud`、聊天目标以及任何无项目目标。初始 prompt 必须包含 `TASK_KIND: work_task`，并将目标描述为可验收的工作任务；不得把新 Thread 创建成聊天。Git 项目仍按调用方项目的 `list_projects.isGitRepository` 选择 `worktree`（默认）或 `local`，但不能离开调用方项目的本地环境。
+
+创建返回后，在第 4 步等待前必须确认真实且可解析的 `threadId` 与 `hostId`，并核对 Thread 的项目 ID、规范化路径、目标类型和环境分别为 `caller_project_id`、`caller_project_path`、`project`、`local`。只有 `clientThreadId`、空值或无法读取的 Thread 身份不能作为成功凭证；任何归属字段不一致都必须 `fail-closed`，不得继续工作或把结果转交协调窗口。
 
 仓库任务严格执行以下顺序：
 
