@@ -1,4 +1,5 @@
 import { pasteProviderImages } from '../media-upload.mjs';
+import { confirmedAssistantResponseMetadata } from '../provider-response.mjs';
 
 import {
   captureSemanticUiEvidence,
@@ -440,6 +441,7 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
     modelSelectionSource: modelSelection.selectionSource,
     promptRemoved,
     attachmentsReady: imagePaths.length > 0 ? attachmentState.ready : null,
+    ...confirmedAssistantResponseMetadata(),
     answer: text,
   };
 }

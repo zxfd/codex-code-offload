@@ -5,6 +5,7 @@ import {
   unavailable,
   waitForAssistantAnswer,
 } from './provider-utils.mjs';
+import { confirmedAssistantResponseMetadata } from './provider-response.mjs';
 
 const ASSISTANT_SELECTOR = '.ds-markdown.ds-assistant-message-main-content';
 const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
@@ -152,6 +153,7 @@ export async function runDeepSeekExpert({ provider, tab, promptPath, timeoutMs =
     provider: 'DeepSeek',
     mode: '专家模式',
     deepThinking: true,
+    ...confirmedAssistantResponseMetadata(),
     promptRemoved,
     answer: text,
   };

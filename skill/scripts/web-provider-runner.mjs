@@ -10,6 +10,10 @@ import {
   validatePromptPath,
 } from './provider-utils.mjs';
 import { validateImagePaths } from './media-upload.mjs';
+import {
+  assertConfirmedAssistantResponse,
+  markStructuredJsonAvailable,
+} from './provider-response.mjs';
 
 const OFFLOAD_HOME = (typeof process !== 'undefined' && process.env && process.env.CODEX_CODE_OFFLOAD_HOME) || join(homedir(), '.local', 'share', 'codex-code-offload');
 const DEFAULT_CONFIG_PATH = join(OFFLOAD_HOME, 'providers.json');
@@ -23,6 +27,42 @@ const ADAPTERS = {
 };
 
 const DEFAULT_MODALITY = 'text';
+const STRUCTURED_RESPONSE_FORMAT_RETRY_PROMPT = [
+  '上一次回答未通过严格的 JSON 解析。',
+  '请只返回一个完整、裸的 JSON 对象，使用 JSON.stringify 风格；不得输出 Markdown、code fence 或任何说明。',
+  '保留原任务要求的 source_url、extraction_summary、data.target 和 data.selector；字符串中的引号、反斜杠和换行必须按 JSON 正确转义。',
+].join('\n');
+
+function isStructuredResponseFormatRetryable(error) {
+  return error?.code === 'STRUCTURED_RESPONSE_INVALID'
+    && error?.failureClass === 'structured_response_invalid'
+    && error?.formatRetryable === true;
+}
+
+async function validateStructuredResponse({ responseValidator, rawResult, requestId, providerId, provider, requestMetadata }) {
+  let structuredResult;
+  try {
+    structuredResult = await responseValidator({
+      answer: rawResult.answer,
+      result: rawResult,
+      requestId,
+      providerId,
+      provider,
+      requestMetadata,
+    });
+  } catch (error) {
+    if (error?.code === 'STRUCTURED_RESPONSE_INVALID') throw error;
+    const validationError = new Error('structured response validation failed');
+    validationError.code = 'STRUCTURED_RESPONSE_INVALID';
+    validationError.cacheFailure = false;
+    validationError.sendStarted = true;
+    validationError.failureClass = 'structured_response_invalid';
+    throw validationError;
+  }
+  const result = markStructuredJsonAvailable(rawResult, structuredResult);
+  assertConfirmedAssistantResponse(result);
+  return result;
+}
 
 export function loadProviderConfig(configPath = DEFAULT_CONFIG_PATH) {
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
@@ -204,6 +244,7 @@ export async function runProviderFallback({
   tabs = new Map(),
   uiEvidence = false,
   imagePaths = [],
+  responseValidator = null,
   adapterLoader = importAdapter,
 }) {
   if (!browser?.tabs?.new) throw new Error('a controlled Browser is required');
@@ -213,8 +254,13 @@ export async function runProviderFallback({
   const mediaFiles = validateImagePaths(imagePaths);
   if (route.modality === 'multimodal' && mediaFiles.length === 0) throw new Error('multimodal Web Reasoning requires at least one image');
   if (route.modality !== 'multimodal' && mediaFiles.length > 0) throw new Error('imagePaths are only allowed on the multimodal route');
+  if (responseValidator !== null && typeof responseValidator !== 'function') throw new TypeError('responseValidator must be a function');
+  if (requestMetadata.require_structured_response === true && responseValidator === null) {
+    throw new Error('structured response validation is required for this request');
+  }
   const requestId = requestMetadata.request_id || randomUUID();
   const continuation = Number(requestMetadata.context_rounds || 1) > 1;
+  const structuredFormatRetryEnabled = requestMetadata.structured_response_format_retry !== false;
   const source = validatePromptPath(promptPath);
   let promptText = readFileSync(source.file, 'utf8');
   rmSync(source.promptDir, { recursive: true, force: true });
@@ -253,7 +299,7 @@ export async function runProviderFallback({
       tabs.set(tabKey, tab);
     }
     try {
-      const result = await runWebProvider({
+      const rawResult = await runWebProvider({
         providerId,
         provider,
         tab,
@@ -264,10 +310,57 @@ export async function runProviderFallback({
         imagePaths: mediaFiles,
         adapterLoader,
       });
-      if (route.modality === 'multimodal' && result.attachmentsReady !== true) throw new Error('provider did not confirm image attachments are ready');
-      health.providers[providerId] = { status: 'available', last_success: new Date().toISOString(), target_signature: providerSignature };
-      writeHealth(stateDir, health);
-      attempts.push({ provider: providerId, status: 'success' });
+      if (route.modality === 'multimodal' && rawResult.attachmentsReady !== true) throw new Error('provider did not confirm image attachments are ready');
+      assertConfirmedAssistantResponse(rawResult);
+      let result = rawResult;
+      let responseAttempt = 1;
+      if (responseValidator !== null) {
+        try {
+          result = await validateStructuredResponse({ responseValidator, rawResult, requestId, providerId, provider, requestMetadata });
+        } catch (error) {
+          if (!structuredFormatRetryEnabled || !isStructuredResponseFormatRetryable(error)) throw error;
+          responseAttempt = 2;
+          attempts.push({
+            provider: providerId,
+            status: 'structured_response_format_retry',
+            attempt: responseAttempt,
+            reason: error.structuredReason,
+          });
+          const retryPromptPath = makeAttemptPrompt(STRUCTURED_RESPONSE_FORMAT_RETRY_PROMPT);
+          let retryRawResult;
+          try {
+            retryRawResult = await runWebProvider({
+              providerId,
+              provider,
+              tab,
+              promptPath: retryPromptPath,
+              timeoutMs,
+              continuation: true,
+              uiEvidence,
+              imagePaths: [],
+              adapterLoader,
+            });
+          } finally {
+            try {
+              removePrompt(retryPromptPath);
+            } catch {
+              // The provider adapter normally removes the retry prompt after submit.
+            }
+          }
+          if (route.modality === 'multimodal' && retryRawResult.attachmentsReady !== undefined && retryRawResult.attachmentsReady !== null) {
+            if (retryRawResult.attachmentsReady !== true) throw new Error('provider did not confirm image attachments are ready');
+          }
+          assertConfirmedAssistantResponse(retryRawResult);
+          result = await validateStructuredResponse({
+            responseValidator,
+            rawResult: retryRawResult,
+            requestId,
+            providerId,
+            provider,
+            requestMetadata,
+          });
+        }
+      }
       let conversationCleanup = null;
       if (isTerminalAnswer(result.answer)) {
         try {
@@ -286,6 +379,9 @@ export async function runProviderFallback({
           throw error;
         }
       }
+      health.providers[providerId] = { status: 'available', last_success: new Date().toISOString(), target_signature: providerSignature };
+      writeHealth(stateDir, health);
+      attempts.push({ provider: providerId, status: 'success', attempt: responseAttempt });
       const event = {
         timestamp: startedAt,
         request_id: requestId,
@@ -298,7 +394,14 @@ export async function runProviderFallback({
         modality: route.modality,
         image_count: mediaFiles.length,
         result_length: result.answer.length,
-        response_confirmed: result.responseConfirmed === true,
+        attempt: responseAttempt,
+        response_confirmation: result.response_confirmation || null,
+        response_complete: result.response_complete === true,
+        responseConfirmed: result.responseConfirmed === true,
+        response_confirmed: result.response_confirmed === true,
+        response_is_new: result.response_is_new === true,
+        generation_complete: result.generationComplete === true,
+        structured_json_available: result.structuredJsonAvailable === true,
         deep_thinking_confirmed: result.deepThinking === true,
         conversation_cleanup: conversationCleanup?.action || null,
         conversation_cleanup_confirmed: conversationCleanup?.confirmed === true,
@@ -312,6 +415,9 @@ export async function runProviderFallback({
       }
       return {
         ...result,
+        attempt: responseAttempt,
+        responseAttempt,
+        response_attempt: responseAttempt,
         providerId,
         modality: route.modality,
         imageCount: mediaFiles.length,
@@ -372,11 +478,12 @@ export async function runProviderFallback({
         tabs.delete(tabKey);
         await closeTab(tab);
       }
+      if (requestMetadata.require_structured_response === true) break;
       // Web transport and extraction failures are provider-local for this request;
       // record them and try the configured fallback rather than silently changing models.
     }
   }
-  if (route.localFallback) {
+  if (route.localFallback && requestMetadata.require_structured_response !== true) {
     logEvent(stateDir, {
       timestamp: startedAt,
       request_id: requestId,
