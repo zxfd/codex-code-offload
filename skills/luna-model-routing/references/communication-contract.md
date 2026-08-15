@@ -70,6 +70,18 @@ constraints: Thread、外部传输、提交、推送、删除、发布和其他�
 
 ## 固定生命周期
 
+### 项目型本地创建约束
+
+仓库 Worker Thread 的创建参数必须绑定当前本地项目，而不是聊天或云端目标。协调 Agent 必须先调用 `codex_app__list_projects`，按当前项目的绝对路径核对返回记录后，才可使用该记录的 `projectId` 创建 Thread。创建参数必须满足：
+
+```text
+target.type = project
+target.projectId = <与当前本地项目绝对路径匹配的 projectId>
+target.environment.type = local
+```
+
+不得使用 `target.type=projectless` 或 `target.type=chatgptWorkCloud`。初始 prompt 必须包含 `TASK_KIND: work_task`，并将目标描述为可验收的工作任务；不得把新 Thread 创建成聊天。Git 项目仍按 `list_projects.isGitRepository` 选择 `worktree`（默认）或 `local`，但不能离开选定项目的本地环境。
+
 仓库任务严格执行以下顺序：
 
 1. `codex_app__list_projects`
@@ -79,7 +91,7 @@ constraints: Thread、外部传输、提交、推送、删除、发布和其他�
 5. `codex_app__read_thread`
 6. 回执只缺一个具体字段时，向原 Thread 最多一次 `codex_app__send_message_to_thread`
 7. 主 Agent 验收
-8. `codex_app__set_thread_archived`
+8. `codex_app__set_thread_archived(threadId, hostId, archived=true)`，并验证返回状态为已归档
 
 只有非空、真实且能被 Thread 工具解析的 `threadId` 和 `hostId` 才算成功创建。`clientThreadId` 只能表示准备中；必须先解析成真实 Thread，不能传给要求 `threadId` 的工具，不能作为成功凭证，不能开始验收，也不能交由协调 Agent 接管。解析失败返回 `blocked`，不得用非 Thread 方式补做。
 

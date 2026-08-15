@@ -40,6 +40,20 @@ description: 强制把当前会话限制为控制面，并把源码、文件、�
 
 ## 唯一 Thread 生命周期
 
+### 创建前硬约束
+
+创建仓库 Worker Thread 前，必须先用 `codex_app__list_projects` 选择与当前本地项目绝对路径匹配的项目记录；不得凭项目名猜测，也不得选择无项目的 `projectless`、聊天或 ChatGPT Work 云端目标。
+
+创建必须使用项目型本地目标，等价于：
+
+```text
+target.type = project
+target.projectId = <list_projects 返回且与当前项目路径匹配的 projectId>
+target.environment.type = local
+```
+
+任务包的初始 prompt 必须明确 `TASK_KIND: work_task`，并写明仓库路径、允许范围和验收条件；不得使用“聊天”“chat”或其他仅会话语义替代工作任务。若项目是 Git 仓库，遵循 `list_projects` 返回的 `isGitRepository` 规则选择 `worktree`，否则使用 `local`；两者都必须保持在选定项目的本地环境内。
+
 仓库任务需要路由时，严格按以下顺序执行，不得跳过、替换或插入非 Thread 载体：
 
 1. `codex_app__list_projects`
@@ -49,7 +63,7 @@ description: 强制把当前会话限制为控制面，并把源码、文件、�
 5. `codex_app__read_thread`
 6. 仅在回执缺少一个具体字段时，最多一次 `codex_app__send_message_to_thread`
 7. 主 Agent 验收
-8. `codex_app__set_thread_archived`
+8. `codex_app__set_thread_archived(threadId, hostId, archived=true)`，并确认返回状态仍为已归档
 
 每个 `Worker` 都必须遵守同一生命周期；`model`、`thinking`、`project` 和任务包随实际任务填写。只有 `codex_app__create_thread` 返回且可被后续 Thread 工具解析的真实 `threadId` 与 `hostId` 才算创建成功。空值、占位值、不可读取状态或只有 `clientThreadId` 都只能表示准备中。
 

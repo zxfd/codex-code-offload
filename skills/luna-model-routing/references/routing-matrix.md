@@ -25,6 +25,8 @@
 
 每个矩阵行的 `owner` 只是逻辑职责名。执行前必须为它一对一创建后台 `Codex App Thread`，并确认真实 `threadId` 与 `hostId`；只有真实双标识都可解析时才算成功。`clientThreadId` 只能表示准备中，必须先解析为真实 Thread，不能传给要求 `threadId` 的工具，也不能交由协调 Agent 接管。
 
+仓库任务创建前，先用 `codex_app__list_projects` 按当前项目绝对路径选择项目记录；创建时必须使用 `target.type=project`、匹配的 `target.projectId` 和 `target.environment.type=local`。不得使用 `projectless`、聊天或 `chatgptWorkCloud` 目标。初始 prompt 必须标记 `TASK_KIND: work_task`，明确这是工作任务；Git 项目按 `isGitRepository` 使用本地 `worktree`（默认）或 `local`。
+
 仓库任务固定执行：
 
 1. `codex_app__list_projects`
@@ -34,7 +36,7 @@
 5. `codex_app__read_thread`
 6. 仅缺一个具体回执字段时，最多一次 `codex_app__send_message_to_thread`
 7. 主 Agent 验收
-8. `codex_app__set_thread_archived`
+8. `codex_app__set_thread_archived(threadId, hostId, archived=true)`，并确认返回已归档
 
 任何 Thread 创建失败、标识不真实、回执缺失超过一个具体字段或验收冲突，都不得在协调窗口补做。按同一 `route_id` 递增 `attempt` 选择合格回退或返回 `blocked`。
 
