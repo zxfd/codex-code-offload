@@ -10,8 +10,10 @@ const REQUIRED_EXPORTS = [
   'captureVisualArtifacts',
   'classifyModality',
   'collectSignalsFromTab',
+  'extractAndStageSingleUrl',
+  'readStagedIngestResult',
+  'cleanupStagedIngestResult',
   'ingestSingleUrlWithLocalContext',
-  'isNeedMoreContext',
 ];
 
 function parseArgs(argv = process.argv.slice(2)) {
@@ -65,7 +67,7 @@ export async function runWebIngestHealthCheck({ root = SCRIPT_ROOT } = {}) {
 
   if (existsSync(corePath)) {
     const source = readFileSync(corePath, 'utf8');
-    check(report, 'provider_independence', !/web-provider-runner|runProviderFallback/u.test(source), 'canonical core has no concrete Provider runner dependency');
+    check(report, 'provider_independence', !/web-provider-runner|runProviderFallback|runProvider|allowExternalTransfer/u.test(source), 'canonical core has no external Provider transfer dependency');
     try {
       const namespace = await import(pathToFileURL(corePath).href);
       const missing = REQUIRED_EXPORTS.filter(name => !(name in namespace));

@@ -70,7 +70,7 @@ Codex 通过浏览器自动化驱动这些页面。登录状态、模型/强度�
 ## 三个 Skill 的边界
 
 - `skills/web-ingest/` 是网站无关的 standalone Skill：只接受单个 URL，负责本地文本/视觉信号、同源重定向、隐私阻断、临时工件、审批状态、`NEED_MORE_CONTEXT` 和清理。它不选择具体 Provider，不包含网站选择器，也不静态依赖 `web-provider-runner.mjs`。
-- `skill/` 是 agentchat 组合 Skill 的历史入口。其 `skill/scripts/web-ingest.mjs` 转发到 standalone 核心，并仅为未显式提供 `runProvider` 的旧调用注入历史 fallback。
+- `skill/` 保留代码、日志、文档和图片推理所需的 Provider 适配器；旧的通用网页提取兼容入口已移除，网页提取统一使用 `skills/web-ingest/`。
 - `skills/luna-model-routing/` 是 Thread-only 路由 Skill；其摄取入口只转发到 standalone 核心，健康检查不打开浏览器、不访问网站、不调用 Provider。
 
 典型检查：

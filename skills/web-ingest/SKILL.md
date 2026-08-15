@@ -1,33 +1,95 @@
 ---
 name: web-ingest
-description: 通用单 URL 页面本地预摄取 Skill，提取有界文本与视觉信号，执行同源重定向、隐私风险和临时工件清理，并在任何外传前要求明确审批。用于需要安全读取一个已授权网页、判断页面上下文或为后续模型分析准备最小上下文的任务。
+description: 通用单 URL 页面本地提取与临时暂存 Skill。默认只在受控 Chrome 中提取有界文本和视觉信号、执行同源与隐私风险检查并写入受限临时文件；由调用方决定后续通过 thread、web-llm 或其他方式读取，读取后应及时清理临时文件。
 ---
 
-# 通用页面摄取
+# 通用页面提取与暂存
 
 ## 工作边界
 
-仅处理一个明确的 `http` 或 `https` URL。先在本地受控浏览器中打开页面，读取有界的可见文本和必要的视觉区域；不接受通配符、多个 URL、分隔符拼接或跨来源重定向。
+仅处理一个明确的 `http` 或 `https` URL。默认行为是“提取并暂存”，不选择 Provider、不调用 Provider、不向外部传输页面内容。调用方可以在取得临时文件路径后，自行决定是否通过 thread、web-llm 或其他受控方式读取；读取完成后必须及时调用清理功能。
 
-默认使用 `{ allowText: true, allowVisual: true, allowExternalTransfer: false, maxImages: 4 }`。本地预摄取不得向外部 Provider 发送页面内容，返回 `requires_user_approval` 的摘要状态供后续审批判断。
+默认策略为：
 
-## 摄取流程
+```js
+{ allowText: true, allowVisual: true, maxImages: 4 }
+```
 
-1. 先运行 `scripts/health-check.mjs`，从实际安装根检查 `SKILL.md`、核心脚本和公开导出；失败即停止，不打开页面、不调用 Provider。
-2. 验证输入是单个绝对 URL，并用受控浏览器导航。最终 URL 必须与原始 URL 同源；跨域重定向直接失败且不得外传。
-3. 在页面本地提取可见文本、标题、图片/Canvas/表格计数和有界视觉区域。文本、提示词、图片文件均限制大小并写入权限为 `0700/0600` 的临时工作区。
-4. 对文本执行凭证、登录提示和个人信息扫描；对视觉路径、标题、替代文本和文本信号执行敏感视觉扫描。高风险内容阻断外传，视觉风险返回审批状态。
-5. 仅当 `allowExternalTransfer: true` 且调用方显式传入具名 `runProvider` 时才允许外传。缺少 `runProvider` 必须 fail-closed；本 Skill 不选择 Provider、不实现 Provider fallback，也不包含网站专用选择器。
-6. Provider 返回以 `NEED_MORE_CONTEXT` 开头的答案时保留临时工件，返回 `requires_user_approval` 和 `fullNeedsMoreContext: true`；其他终局或失败路径都清理提示词、图片和工作区，并关闭页面标签。
+不接受多个 URL、通配符、分隔符拼接或跨来源重定向。
 
-## 外传审批与续上下文
+## 三个公开功能
 
-把本地预摄取结果视为审批材料，不把原始 DOM、HTML、Cookie、存储、OCR、查询令牌或完整页面正文带入协调上下文。获得针对当前页面数据和一个具名 Provider 的明确审批后，调用方可在同一路由重新执行并设置 `allowExternalTransfer: true`，只注入该 `runProvider` 一次；Provider 失败时停止并重新请求审批，不能沿用旧审批或自动切换。
+核心脚本是 `scripts/web-ingest.mjs`，公开提供：
 
-续上下文只允许使用仍在本地工作区中的受限工件，并继续遵守单 URL、同源、风险扫描、截断和清理规则。若不再需要续问，应显式清理保留的工作区。
+1. `extractAndStageSingleUrl(options)`：提取单个 URL 并暂存结果。
+2. `readStagedIngestResult(temporaryFilePath)`：读取指定的暂存结果。
+3. `cleanupStagedIngestResult(temporaryFilePath)`：删除指定暂存结果及其视觉附件。
 
-## 清理与返回
+`ingestSingleUrlWithLocalContext` 仅作为历史兼容别名，行为等同于第一个功能；它不再执行 Provider 外传。
 
-使用 `scripts/web-ingest.mjs` 的 `ingestSingleUrlWithLocalContext` 及相关公开导出。调用方不得依赖未公开的原始页面字段；返回只包含 URL 来源、模态、风险/计数摘要、哈希、外传状态和清理状态。除 `NEED_MORE_CONTEXT` 续问外，必须确认临时提示词、视觉附件和工作区已删除。
+## 功能一：提取并暂存
 
-核心脚本是网站无关的摄取与安全边界；Provider 适配器、选择器、fallback 和登录会话属于组合 Skill 或调用方，不应写入这里。
+完整流程为：
+
+```text
+输入单个 URL
+  ↓
+健康检查
+  ↓
+URL 与受控 Chrome 约束校验
+  ↓
+受控 Chrome 打开页面
+  ↓
+同源重定向校验
+  ↓
+本地提取可见文本与视觉信号
+  ↓
+文本隐私扫描 + 视觉风险扫描
+  ↓
+暂存受限结果和视觉附件
+  ↓
+判断 text / multimodal 模式
+  ↓
+返回摘要及临时文件路径
+```
+
+健康检查失败时立即停止，不打开页面。
+
+页面提取只读取有界可见信号，不暂存 Cookie、HTML、完整 DOM、浏览器存储、查询令牌或完整页面原文。文本最多暂存约 6,000 个字符；视觉区域最多 4 个。
+
+临时目录结构为：
+
+```text
+codex-web-ingest-xxxxxx/
+├── result.json
+├── visual-01.png
+└── visual-02.png
+```
+
+`result.json` 保存来源、模式、计数、哈希、风险摘要、受限文本摘录、视觉区域和视觉附件路径。实际视觉内容以权限为 `0600` 的图片文件保存；临时目录权限为 `0700`。
+
+文本凭证或登录提示风险为高时阻断并不生成暂存结果。个人信息信号和视觉风险会写入风险摘要，由调用方在决定读取或外传前自行判断。
+
+成功返回 `status: "staged"` 和 `temporaryFilePath`。阻断返回 `status: "blocked"`；浏览器、路径或提取失败返回 `status: "failed"`。
+
+## 功能二：读取结果
+
+调用方使用 `readStagedIngestResult(temporaryFilePath)` 读取暂存的 `result.json`。
+
+读取功能会：
+
+- 要求绝对路径；
+- 要求路径位于系统临时目录下由本 Skill 创建的目录；
+- 拒绝路径穿越、符号链接和非普通文件；
+- 校验暂存结果的 schema 和模式字段；
+- 只返回受限暂存数据，不重新打开网页。
+
+读取结果后，调用方应尽快执行功能三。若要交给 thread 或 web-llm，应只传递当前任务必要的 JSON 字段和视觉附件，不扩大文件范围。
+
+## 功能三：清理临时文件
+
+调用方使用 `cleanupStagedIngestResult(temporaryFilePath)` 删除对应的临时目录，包括 `result.json` 和受限视觉附件。
+
+清理功能会再次校验路径、普通文件类型和目录内容；发现目录中存在未知文件时 fail-closed，不递归删除。返回 `temporaryFileRemoved` 供调用方确认清理状态。
+
+除非明确还要续用结果，否则不得长期保留临时文件。这个 Skill 不负责决定 thread、web-llm 或其他读取器，也不负责 Provider fallback、登录会话或网站专用选择器。
