@@ -27,10 +27,13 @@ const ADAPTERS = {
 };
 
 const DEFAULT_MODALITY = 'text';
+export const SYSTEM_CLIPBOARD_TEXT_TRANSPORT = 'system_clipboard';
+const MAX_SYSTEM_CLIPBOARD_BYTES = 2_000_000;
+const MAX_CLIPBOARD_INSTRUCTION_CHARS = 4_000;
 const STRUCTURED_RESPONSE_FORMAT_RETRY_PROMPT = [
   '上一次回答未通过严格的 JSON 解析。',
   '请只返回一个完整、裸的 JSON 对象，使用 JSON.stringify 风格；不得输出 Markdown、code fence 或任何说明。',
-  '保留原任务要求的 source_url、extraction_summary、data.target 和 data.selector；字符串中的引号、反斜杠和换行必须按 JSON 正确转义。',
+  '保留原任务要求的 source_url、extraction_summary、data.target 和 data.selector；整个 JSON 对象必须压缩为单行，所有字符串值必须单行，禁止直接换行、制表符或其他控制字符；字符串中的引号、反斜杠和换行必须按 JSON 正确转义。',
 ].join('\n');
 
 function isStructuredResponseFormatRetryable(error) {
@@ -123,6 +126,41 @@ export function resolveProviderRoute(config, requestMetadata = {}) {
   return { modality, priority: route.priority, localFallback: route.local_fallback === true };
 }
 
+export function validateSystemClipboardRoute({ config, route, requestMetadata, promptText = null } = {}) {
+  if (requestMetadata?.text_transport !== SYSTEM_CLIPBOARD_TEXT_TRANSPORT) return null;
+  if (route?.modality !== 'text') throw new Error('system clipboard text transport requires the text route');
+  if (!Array.isArray(route.priority) || route.priority.length !== 1 || route.localFallback === true) {
+    throw new Error('system clipboard text transport requires exactly one Provider and local_fallback false');
+  }
+  const providerId = route.priority[0];
+  const provider = config?.providers?.[providerId];
+  if (provider?.adapter !== 'chatgpt-web') {
+    throw new Error('system clipboard text transport currently requires the ChatGPT Web adapter');
+  }
+  if (requestMetadata.require_structured_response !== true) {
+    throw new Error('system clipboard text transport requires structured response validation');
+  }
+  if (!Number.isSafeInteger(requestMetadata.clipboard_text_bytes)
+    || requestMetadata.clipboard_text_bytes < 1
+    || requestMetadata.clipboard_text_bytes > MAX_SYSTEM_CLIPBOARD_BYTES) {
+    throw new Error('clipboard_text_bytes is invalid');
+  }
+  if (!/^[a-f0-9]{64}$/u.test(String(requestMetadata.clipboard_text_sha256 || ''))) {
+    throw new Error('clipboard_text_sha256 is invalid');
+  }
+  let sourceUrl;
+  try {
+    sourceUrl = new URL(requestMetadata.clipboard_source_url);
+  } catch {
+    throw new Error('clipboard_source_url is invalid');
+  }
+  if (!['http:', 'https:'].includes(sourceUrl.protocol)) throw new Error('clipboard_source_url is invalid');
+  if (promptText !== null && (!String(promptText).trim() || String(promptText).length > MAX_CLIPBOARD_INSTRUCTION_CHARS)) {
+    throw new Error('system clipboard instruction must be non-empty and at most 4000 characters');
+  }
+  return { providerId, sourceUrl: sourceUrl.toString() };
+}
+
 export function estimatePromptTokens(text) {
   let asciiCharacters = 0;
   let nonAsciiCharacters = 0;
@@ -213,11 +251,34 @@ export async function runWebProvider({
   continuation = false,
   uiEvidence = false,
   imagePaths = [],
+  requestMetadata = {},
   adapterLoader = importAdapter,
 }) {
   const module = await adapterLoader(provider.adapter);
   if (typeof module.run !== 'function') throw new Error(`provider adapter has no run(): ${provider.adapter}`);
-  return module.run({ providerId, provider, tab, promptPath, timeoutMs, continuation, uiEvidence, imagePaths });
+  return module.run({ providerId, provider, tab, promptPath, timeoutMs, continuation, uiEvidence, imagePaths, requestMetadata });
+}
+
+function assertSystemClipboardResult(result, requestMetadata) {
+  if (requestMetadata?.text_transport !== SYSTEM_CLIPBOARD_TEXT_TRANSPORT) return null;
+  if (
+    result?.clipboardPasteConfirmed !== true
+    || result?.clipboard_paste_confirmed !== true
+    || result?.clipboardSha256Confirmed !== true
+    || result?.clipboard_sha256_confirmed !== true
+  ) {
+    const error = new Error('provider did not confirm the request-scoped system clipboard paste');
+    error.cacheFailure = false;
+    error.sendStarted = true;
+    error.failureClass = 'clipboard_paste_unconfirmed';
+    throw error;
+  }
+  return {
+    clipboardPasteConfirmed: true,
+    clipboard_paste_confirmed: true,
+    clipboardSha256Confirmed: true,
+    clipboard_sha256_confirmed: true,
+  };
 }
 
 export function assertChromeBrowser(browser, browserChannel) {
@@ -251,6 +312,7 @@ export async function runProviderFallback({
   assertChromeBrowser(browser, browserChannel);
   const config = loadProviderConfig(configPath);
   const route = resolveProviderRoute(config, requestMetadata);
+  validateSystemClipboardRoute({ config, route, requestMetadata });
   const mediaFiles = validateImagePaths(imagePaths);
   if (route.modality === 'multimodal' && mediaFiles.length === 0) throw new Error('multimodal Web Reasoning requires at least one image');
   if (route.modality !== 'multimodal' && mediaFiles.length > 0) throw new Error('imagePaths are only allowed on the multimodal route');
@@ -263,6 +325,7 @@ export async function runProviderFallback({
   const structuredFormatRetryEnabled = requestMetadata.structured_response_format_retry !== false;
   const source = validatePromptPath(promptPath);
   let promptText = readFileSync(source.file, 'utf8');
+  validateSystemClipboardRoute({ config, route, requestMetadata, promptText });
   rmSync(source.promptDir, { recursive: true, force: true });
   ensureStateDirectory(stateDir);
   const health = readHealth(stateDir);
@@ -308,10 +371,12 @@ export async function runProviderFallback({
         continuation,
         uiEvidence,
         imagePaths: mediaFiles,
+        requestMetadata,
         adapterLoader,
       });
       if (route.modality === 'multimodal' && rawResult.attachmentsReady !== true) throw new Error('provider did not confirm image attachments are ready');
       assertConfirmedAssistantResponse(rawResult);
+      const clipboardConfirmation = assertSystemClipboardResult(rawResult, requestMetadata);
       let result = rawResult;
       let responseAttempt = 1;
       if (responseValidator !== null) {
@@ -338,6 +403,7 @@ export async function runProviderFallback({
               continuation: true,
               uiEvidence,
               imagePaths: [],
+              requestMetadata,
               adapterLoader,
             });
           } finally {
@@ -359,6 +425,7 @@ export async function runProviderFallback({
             provider,
             requestMetadata,
           });
+          if (clipboardConfirmation) result = { ...result, ...clipboardConfirmation };
         }
       }
       let conversationCleanup = null;
@@ -402,6 +469,11 @@ export async function runProviderFallback({
         response_is_new: result.response_is_new === true,
         generation_complete: result.generationComplete === true,
         structured_json_available: result.structuredJsonAvailable === true,
+        text_transport: requestMetadata.text_transport || 'direct_fill',
+        clipboard_paste_confirmed: result.clipboardPasteConfirmed === true,
+        clipboard_sha256_confirmed: result.clipboardSha256Confirmed === true,
+        clipboard_insertion_method: result.clipboardInsertionMethod || null,
+        clipboard_fill_fallback_used: result.clipboardFillFallbackUsed === true,
         deep_thinking_confirmed: result.deepThinking === true,
         conversation_cleanup: conversationCleanup?.action || null,
         conversation_cleanup_confirmed: conversationCleanup?.confirmed === true,
@@ -423,6 +495,8 @@ export async function runProviderFallback({
         imageCount: mediaFiles.length,
         providerAttempts: attempts,
         conversationCleanup,
+        textTransport: requestMetadata.text_transport || 'direct_fill',
+        text_transport: requestMetadata.text_transport || 'direct_fill',
         requestId,
       };
     } catch (error) {

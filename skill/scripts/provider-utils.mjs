@@ -258,6 +258,24 @@ async function waitForVisibleAnswer(answer, deadline, checkInterrupted) {
   throw new Error('provider answer did not become visible before timeout');
 }
 
+async function readAssistantAnswerText(answer) {
+  const innerText = await answer.innerText({ timeoutMs: 10_000 });
+  if (!/[\u0000-\u001F\u007F]/u.test(innerText) || typeof answer.evaluate !== 'function') {
+    return innerText;
+  }
+  try {
+    const textContent = await answer.evaluate(element => (
+      typeof element?.textContent === 'string' ? element.textContent : ''
+    ));
+    if (typeof textContent === 'string' && textContent && !/[\u0000-\u001F\u007F]/u.test(textContent)) {
+      return textContent;
+    }
+  } catch {
+    // Keep the verified visible text when textContent is unavailable.
+  }
+  return innerText;
+}
+
 export async function waitForAssistantAnswer({ answer, stopButtons = [], timeoutMs = 180_000, checkInterrupted }) {
   const deadline = Date.now() + timeoutMs;
   await waitForVisibleAnswer(answer, deadline, checkInterrupted);
@@ -270,7 +288,7 @@ export async function waitForAssistantAnswer({ answer, stopButtons = [], timeout
       await new Promise(resolveTimeout => setTimeout(resolveTimeout, 500));
       continue;
     }
-    const current = await answer.innerText({ timeoutMs: 10_000 });
+    const current = await readAssistantAnswerText(answer);
     const generating = (await Promise.all(stopButtons.map(locatorVisible))).some(Boolean);
     generationObserved ||= generating;
     if (!generating && current && current === previous) {

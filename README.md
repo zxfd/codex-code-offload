@@ -10,6 +10,7 @@
 Codex Desktop
   -> 全局 AGENTS.md 路由判断（可选）
   -> web-ingest standalone Skill（本仓库 skills/web-ingest/，先做本地页面预摄取）
+  -> web-llm-page-extract Skill（同上下文有界 DOM、系统剪贴板、结构化回执与终态清理）
   -> agentchat-code-offload 组合 Skill（本仓库 skill/，兼容入口并注入历史 Provider runner）
   -> Luna model-routing Skill（本仓库 skills/luna-model-routing/，只负责 Thread 路由）
   -> codex-agentchat-offload Adapter（本仓库 adapter/，调用 repomix 打包）
@@ -41,6 +42,7 @@ cd codex-code-offload
 
 - `skill/` 软链到 `~/.codex/skills/agentchat-code-offload/`
 - `skills/web-ingest/` 软链到 `~/.agents/skills/web-ingest/`
+- `skills/web-llm-page-extract/` 软链到 `~/.agents/skills/web-llm-page-extract/`
 - `skills/luna-model-routing/` 软链到 `~/.agents/skills/luna-model-routing/`
 - `skills/repo-execution/` 软链到 `~/.agents/skills/repo-execution/`
 - `adapter/` 软链到 `~/.local/share/codex-code-offload/`（可用 `CODEX_CODE_OFFLOAD_HOME` 覆盖）
@@ -67,10 +69,11 @@ Codex 通过浏览器自动化驱动这些页面。登录状态、模型/强度�
 把 `config/agents-md-offload-block.md` 中的片段合并到你的全局 `AGENTS.md`，Codex 就会在大型分析任务
 上默认走本网关；不合并时仍可手动按 `skill/SKILL.md` 调用。
 
-## 三个 Skill 的边界
+## 各 Skill 的边界
 
-- `skills/web-ingest/` 是网站无关的 standalone Skill：只接受单个 URL，负责本地文本/视觉信号、同源重定向、隐私阻断、临时工件、审批状态、`NEED_MORE_CONTEXT` 和清理。它不选择具体 Provider，不包含网站选择器，也不静态依赖 `web-provider-runner.mjs`。
-- `skill/` 保留代码、日志、文档和图片推理所需的 Provider 适配器；旧的通用网页提取兼容入口已移除，网页提取统一使用 `skills/web-ingest/`。
+- `skills/web-ingest/` 是网站无关的 standalone Skill：只接受单个 URL，负责本地文本/视觉信号、同源重定向、隐私阻断、临时暂存和清理。它不选择具体 Provider、不执行外传，也不静态依赖 `web-provider-runner.mjs`。
+- `skills/web-llm-page-extract/` 在 `web-ingest` 之上提供真实运行入口：调用方显式提供任务词组，脚本在同一 Chrome 标签内选出可见任务子树，写入并校验有界 DOM，经 macOS `text/plain` 剪贴板粘贴到唯一 ChatGPT Provider，严格验证本次新 JSON 回复，然后归档会话、关闭标签并清理临时工件。
+- `skill/` 保留代码、日志、文档和图片推理所需的 Provider 适配器；页面到 Web-LLM 的完整闭环统一使用 `skills/web-llm-page-extract/`，其底层预摄取统一使用 `skills/web-ingest/`。
 - `skills/luna-model-routing/` 是 Thread-only 路由 Skill；其摄取入口只转发到 standalone 核心，健康检查不打开浏览器、不访问网站、不调用 Provider。
 
 典型检查：
@@ -81,9 +84,14 @@ node /Users/gin/.agents/skills/web-ingest/scripts/health-check.mjs \
 node /Users/gin/.agents/skills/repo-execution/scripts/verify-installed-skill.mjs \
   --source "$PWD/skills/web-ingest" \
   --installed /Users/gin/.agents/skills/web-ingest
+node /Users/gin/.agents/skills/repo-execution/scripts/verify-installed-skill.mjs \
+  --source "$PWD/skills/web-llm-page-extract" \
+  --installed /Users/gin/.agents/skills/web-llm-page-extract
+node /Users/gin/.agents/skills/web-llm-page-extract/scripts/health-check.mjs \
+  --root /Users/gin/.agents/skills/web-llm-page-extract
 ```
 
-standalone 默认只做本地预摄取。只有调用方取得针对当前页面数据和一个具名 Provider 的明确审批，并显式注入 `runProvider`、设置 `allowExternalTransfer: true` 后，才会把有界工件交给 Provider；审批不会自动转移或触发 fallback。
+`web-ingest` 始终只做本地预摄取。只有调用方取得针对当前页面数据和一个具名 ChatGPT Provider 的明确审批后，`web-llm-page-extract` 才会通过端到端入口把有界 DOM 写入系统剪贴板；入口强制唯一 Provider、`local_fallback: false`、粘贴哈希确认、严格 JSON 和终态清理，审批不会自动转移或触发 fallback。
 
 ## 目录结构
 
@@ -131,4 +139,4 @@ DeepSeek 每次发送前还会确认“专家模式”和“深度思考”均�
 ./uninstall.sh
 ```
 
-只会移除指向本仓库目标的 Skill/Adapter 软链（包括 `~/.agents/skills/web-ingest`）和状态目录；非软链实体、指向其他目标的软链均保留，仓库文件本身不改动。
+只会移除指向本仓库目标的 Skill/Adapter 软链（包括 `~/.agents/skills/web-ingest` 与 `~/.agents/skills/web-llm-page-extract`）和状态目录；非软链实体、指向其他目标的软链均保留，仓库文件本身不改动。

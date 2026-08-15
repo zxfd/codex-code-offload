@@ -86,7 +86,7 @@ export async function runWebIngestHealthCheck({ root = SCRIPT_ROOT } = {}) {
 }
 
 function isMainModule() {
-  if (!process.argv[1]) return false;
+  if (typeof process === 'undefined' || !process?.argv?.[1]) return false;
   try {
     return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
   } catch {

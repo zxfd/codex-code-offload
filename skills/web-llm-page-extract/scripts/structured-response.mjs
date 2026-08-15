@@ -65,7 +65,7 @@ function parseCandidates(answer) {
   return parsed[0];
 }
 
-export function parseStructuredAssistantResponse(answer, { requestUrl } = {}) {
+export function parseStructuredAssistantResponse(answer, { requestUrl, expectedTarget, expectedSelector } = {}) {
   if (typeof requestUrl !== 'string' || !requestUrl.trim()) fail('request_url_missing');
   const payload = parseCandidates(answer);
   if (payload.status === 'blocked') fail('blocked');
@@ -81,8 +81,14 @@ export function parseStructuredAssistantResponse(answer, { requestUrl } = {}) {
   if (typeof payload.data.target !== 'string' || !payload.data.target.trim()) {
     fail('data_target_missing');
   }
+  if (expectedTarget !== undefined && payload.data.target !== expectedTarget) {
+    fail('data_target_mismatch');
+  }
   if (typeof payload.data.selector !== 'string' || !payload.data.selector.trim()) {
     fail('data_selector_missing');
+  }
+  if (expectedSelector !== undefined && payload.data.selector !== expectedSelector) {
+    fail('data_selector_mismatch');
   }
   return payload;
 }

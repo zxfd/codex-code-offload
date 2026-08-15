@@ -48,6 +48,14 @@ test('rejects source mismatch and missing required targets', () => {
     () => parseStructuredAssistantResponse(json({ data: { selector: 'x' } }), { requestUrl }),
     /data_target_missing/u,
   );
+  assert.throws(
+    () => parseStructuredAssistantResponse(json(), { requestUrl, expectedTarget: 'other' }),
+    /data_target_mismatch/u,
+  );
+  assert.throws(
+    () => parseStructuredAssistantResponse(json(), { requestUrl, expectedSelector: 'other' }),
+    /data_selector_mismatch/u,
+  );
 });
 
 test('does not treat a truncated response as a valid structured result', () => {

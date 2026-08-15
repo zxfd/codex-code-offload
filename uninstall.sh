@@ -14,6 +14,7 @@ done
 REPO_ROOT="$(cd -P "$(dirname "${SCRIPT_PATH}")" && pwd)"
 SKILL_DIR="${HOME}/.codex/skills/agentchat-code-offload"
 WEB_INGEST_SKILL_DIR="${HOME}/.agents/skills/web-ingest"
+WEB_LLM_PAGE_EXTRACT_SKILL_DIR="${HOME}/.agents/skills/web-llm-page-extract"
 ROUTING_SKILL_DIR="${HOME}/.agents/skills/luna-model-routing"
 REPO_EXECUTION_SKILL_DIR="${HOME}/.agents/skills/repo-execution"
 ADAPTER_DIR="${CODEX_CODE_OFFLOAD_HOME:-${HOME}/.local/share/codex-code-offload}"
@@ -46,6 +47,7 @@ remove_link() {
 
 remove_link "${SKILL_DIR}" "${REPO_ROOT}/skill"
 remove_link "${WEB_INGEST_SKILL_DIR}" "${REPO_ROOT}/skills/web-ingest"
+remove_link "${WEB_LLM_PAGE_EXTRACT_SKILL_DIR}" "${REPO_ROOT}/skills/web-llm-page-extract"
 remove_link "${ROUTING_SKILL_DIR}" "${REPO_ROOT}/skills/luna-model-routing"
 remove_link "${REPO_EXECUTION_SKILL_DIR}" "${REPO_ROOT}/skills/repo-execution"
 remove_link "${ADAPTER_DIR}" "${REPO_ROOT}/adapter"

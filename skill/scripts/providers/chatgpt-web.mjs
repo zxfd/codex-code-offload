@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { platform } from 'node:os';
+
 import { pasteProviderImages } from '../media-upload.mjs';
 import { confirmedAssistantResponseMetadata } from '../provider-response.mjs';
 
@@ -37,6 +41,10 @@ const CHATGPT_ARCHIVE_LABELS = ['归档', 'Archive'];
 
 const CHATGPT_TWO_STEP_MIN_CHARS = 4_000;
 const CONTEXT_SECTION_HEADERS = ['CODE_CONTEXT', 'DOCUMENT_CONTEXT', 'ADDITIONAL_CONTEXT'];
+const SYSTEM_CLIPBOARD_TEXT_TRANSPORT = 'system_clipboard';
+const CLIPBOARD_PASTE_TIMEOUT_MS = 20_000;
+const SWALLOWED_PASTE_GRACE_MS = 1_000;
+const SYSTEM_CLIPBOARD_MAX_BYTES = 2_000_000;
 
 export function chatGptComposerSettleTimeout(promptLength) {
   return Number(promptLength || 0) >= LONG_PROMPT_CHARS
@@ -491,12 +499,227 @@ function splitChatGptContext(promptText) {
   };
 }
 
-async function submitChatGptComposer({ tab, provider, uiEvidence, input, text, onSendStarted }) {
-  const composerSettleTimeout = chatGptComposerSettleTimeout(text.length);
-  await runChatGptStageWithRecovery({
-    tab,
-    action: () => input.fill(text, { timeoutMs: Math.max(30_000, composerSettleTimeout) }),
+function sha256(value) {
+  return createHash('sha256').update(String(value)).digest('hex');
+}
+
+async function composerTextDigest(composer) {
+  const observed = await composer.evaluate(element => ({
+    value: typeof element.value === 'string' ? element.value : '',
+    innerText: typeof element.innerText === 'string' ? element.innerText : '',
+    textContent: typeof element.textContent === 'string' ? element.textContent : '',
+  }));
+  const fields = typeof observed === 'string'
+    ? { value: '', innerText: observed, textContent: observed }
+    : observed || { value: '', innerText: '', textContent: '' };
+  const rawText = [fields.value, fields.innerText, fields.textContent]
+    .map(value => String(value || '').replace(/\r\n?/gu, '\n'))
+    .find(value => value.length > 0) || '';
+  const text = rawText.trim();
+  return {
+    characters: text.length,
+    bytes: Buffer.byteLength(text, 'utf8'),
+    sha256: sha256(text),
+    rawCharacters: rawText.length,
+    rawBytes: Buffer.byteLength(rawText, 'utf8'),
+    rawSha256: sha256(rawText),
+    observedValueBytes: Buffer.byteLength(String(fields.value || ''), 'utf8'),
+    observedInnerTextBytes: Buffer.byteLength(String(fields.innerText || ''), 'utf8'),
+    observedTextContentBytes: Buffer.byteLength(String(fields.textContent || ''), 'utf8'),
+  };
+}
+
+function readMacSystemClipboardText() {
+  if (platform() !== 'darwin') throw new Error('macOS system clipboard is unavailable');
+  const inherited = typeof process !== 'undefined' && process?.env ? process.env : {};
+  const result = spawnSync('pbpaste', [], {
+    encoding: 'utf8',
+    env: { ...inherited, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' },
+    maxBuffer: SYSTEM_CLIPBOARD_MAX_BYTES + 1,
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') {
+    throw new Error('macOS system clipboard read failed');
+  }
+  return result.stdout;
+}
+
+function verifiedSystemClipboardText({
+  expectedBytes,
+  expectedSha256,
+  stage,
+  readSystemClipboardText = readMacSystemClipboardText,
+} = {}) {
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 1 || !/^[a-f0-9]{64}$/u.test(String(expectedSha256 || ''))) {
+    throw new Error('ChatGPT system clipboard receipt is invalid');
+  }
+  let clipboardText;
+  try {
+    clipboardText = readSystemClipboardText();
+  } catch {
+    unavailable(`ChatGPT system clipboard read failed: stage=${stage || 'unknown'}`, {
+      cacheFailure: false,
+      failureClass: 'clipboard_read_failed',
+    });
+  }
+  const clipboardDigest = {
+    bytes: Buffer.byteLength(clipboardText, 'utf8'),
+    sha256: sha256(clipboardText),
+  };
+  if (clipboardDigest.bytes !== expectedBytes || clipboardDigest.sha256 !== expectedSha256) {
+    unavailable(
+      `ChatGPT system clipboard receipt mismatch: stage=${stage || 'unknown'}, expected_bytes=${expectedBytes}, actual_bytes=${clipboardDigest.bytes}, expected_sha256=${expectedSha256}, actual_sha256=${clipboardDigest.sha256}`,
+      {
+        cacheFailure: false,
+        failureClass: 'clipboard_receipt_mismatch',
+      },
+    );
+  }
+  return clipboardText;
+}
+
+export async function pasteSystemClipboardText({
+  tab,
+  composer,
+  expectedBytes,
+  expectedSha256,
+  timeoutMs = CLIPBOARD_PASTE_TIMEOUT_MS,
+  swallowedPasteGraceMs = SWALLOWED_PASTE_GRACE_MS,
+  readSystemClipboardText = readMacSystemClipboardText,
+} = {}) {
+  if (
+    !tab?.playwright?.waitForTimeout
+    || !tab?.clipboard?.writeText
+    || !composer?.fill
+    || !composer?.click
+    || !composer?.press
+    || !composer?.evaluate
+  ) {
+    unavailable('ChatGPT system clipboard transport is unavailable', {
+      cacheFailure: false,
+      failureClass: 'clipboard_transport_unavailable',
+    });
+  }
+  const clipboardText = verifiedSystemClipboardText({
+    expectedBytes,
+    expectedSha256,
+    stage: 'pre_paste',
+    readSystemClipboardText,
+  });
+  if (!Number.isSafeInteger(swallowedPasteGraceMs) || swallowedPasteGraceMs < 0 || swallowedPasteGraceMs >= timeoutMs) {
+    throw new Error('ChatGPT swallowed-paste grace period is invalid');
+  }
+
+  let lastDigest = null;
+  let fillFallbackUsed = false;
+  let bridgeStage = 'fill_empty';
+  try {
+    await composer.fill('', { timeoutMs: 30_000 });
+    bridgeStage = 'focus_composer';
+    await composer.click({ timeoutMs: 10_000 });
+    bridgeStage = 'write_virtual_clipboard';
+    await tab.clipboard.writeText(clipboardText);
+    bridgeStage = 'press_paste';
+    await composer.press('ControlOrMeta+V', { timeoutMs: 10_000 });
+    const deadline = Date.now() + timeoutMs;
+    const fillFallbackAt = Date.now() + swallowedPasteGraceMs;
+    while (Date.now() < deadline) {
+      lastDigest = await composerTextDigest(composer);
+      if (lastDigest.bytes === expectedBytes && lastDigest.sha256 === expectedSha256) {
+        return {
+          clipboardPasteConfirmed: true,
+          clipboard_paste_confirmed: true,
+          clipboardSha256Confirmed: true,
+          clipboard_sha256_confirmed: true,
+          clipboardInsertionMethod: fillFallbackUsed ? 'verified_fill_after_swallowed_paste' : 'virtual_clipboard_paste',
+          clipboard_insertion_method: fillFallbackUsed ? 'verified_fill_after_swallowed_paste' : 'virtual_clipboard_paste',
+          clipboardFillFallbackUsed: fillFallbackUsed,
+          clipboard_fill_fallback_used: fillFallbackUsed,
+          pastedCharacters: lastDigest.characters,
+        };
+      }
+      if (!fillFallbackUsed && lastDigest.bytes === 0 && Date.now() >= fillFallbackAt) {
+        bridgeStage = 'fill_verified_fallback';
+        await composer.fill(clipboardText, { timeoutMs: Math.max(30_000, clipboardText.length * 100) });
+        fillFallbackUsed = true;
+        continue;
+      }
+      await tab.playwright.waitForTimeout(250);
+    }
+  } catch {
+    unavailable(`ChatGPT system clipboard bridge failed: stage=${bridgeStage}`, {
+      cacheFailure: false,
+      failureClass: 'clipboard_transport_failed',
+    });
+  } finally {
+    try {
+      await tab.clipboard.writeText('');
+    } catch {
+      // Do not hide the primary paste result when ephemeral clipboard cleanup fails.
+    }
+  }
+  unavailable(
+    `ChatGPT system clipboard paste could not be confirmed: expected_bytes=${expectedBytes}, actual_bytes=${lastDigest?.bytes ?? -1}, actual_sha256=${lastDigest?.sha256 || 'unavailable'}, raw_bytes=${lastDigest?.rawBytes ?? -1}, raw_sha256=${lastDigest?.rawSha256 || 'unavailable'}, value_bytes=${lastDigest?.observedValueBytes ?? -1}, inner_text_bytes=${lastDigest?.observedInnerTextBytes ?? -1}, text_content_bytes=${lastDigest?.observedTextContentBytes ?? -1}`,
+    {
+      cacheFailure: false,
+      failureClass: 'clipboard_paste_unconfirmed',
+    },
+  );
+}
+
+async function appendInstructionAfterClipboard({ composer, instruction, pastedCharacters }) {
+  if (typeof instruction !== 'string' || !instruction.trim()) throw new Error('clipboard instruction is empty');
+  await composer.press('Shift+Enter', { timeoutMs: 10_000 });
+  await composer.press('Shift+Enter', { timeoutMs: 10_000 });
+  await composer.type(instruction, { timeoutMs: Math.max(30_000, instruction.length * 100) });
+  const digest = await composerTextDigest(composer);
+  if (digest.characters <= pastedCharacters || digest.characters < pastedCharacters + instruction.trim().length) {
+    unavailable('ChatGPT clipboard instruction append could not be confirmed', {
+      cacheFailure: false,
+      failureClass: 'clipboard_instruction_unconfirmed',
+    });
+  }
+  return digest.characters;
+}
+
+async function submitChatGptComposer({
+  tab,
+  provider,
+  uiEvidence,
+  input,
+  text,
+  onSendStarted,
+  textTransport = 'direct_fill',
+  clipboardReceipt = null,
+}) {
+  let clipboardState = null;
+  let effectivePromptLength = text.length;
+  if (textTransport === SYSTEM_CLIPBOARD_TEXT_TRANSPORT) {
+    clipboardState = await runChatGptStageWithRecovery({
+      tab,
+      action: () => pasteSystemClipboardText({
+        tab,
+        composer: input,
+        expectedBytes: clipboardReceipt?.bytes,
+        expectedSha256: clipboardReceipt?.sha256,
+      }),
+    });
+    effectivePromptLength = await runChatGptStageWithRecovery({
+      tab,
+      action: () => appendInstructionAfterClipboard({
+        composer: input,
+        instruction: text,
+        pastedCharacters: clipboardState.pastedCharacters,
+      }),
+    });
+  } else {
+    const composerSettleTimeout = chatGptComposerSettleTimeout(text.length);
+    await runChatGptStageWithRecovery({
+      tab,
+      action: () => input.fill(text, { timeoutMs: Math.max(30_000, composerSettleTimeout) }),
+    });
+  }
+  const composerSettleTimeout = chatGptComposerSettleTimeout(effectivePromptLength);
   await runChatGptStageWithRecovery({
     tab,
     action: () => waitForComposerSubmissionReadiness({
@@ -504,7 +727,7 @@ async function submitChatGptComposer({ tab, provider, uiEvidence, input, text, o
       provider,
       uiEvidence,
       stage: 'post_fill_attachment_settle',
-      promptLength: text.length,
+      promptLength: effectivePromptLength,
     }),
   });
   const reasoning = await runChatGptStageWithRecovery({
@@ -524,7 +747,7 @@ async function submitChatGptComposer({ tab, provider, uiEvidence, input, text, o
       provider,
       uiEvidence,
       stage: 'final_pre_submit_settle',
-      promptLength: text.length,
+      promptLength: effectivePromptLength,
     }),
   });
   await runChatGptStageWithRecovery({
@@ -568,7 +791,7 @@ async function submitChatGptComposer({ tab, provider, uiEvidence, input, text, o
     // point. Recover a visible rate-limit dialog, but never click send again.
     await recoverRateLimitAfterSubmit({ tab });
   }
-  return reasoning;
+  return { reasoning, clipboardState };
 }
 
 export async function locateNewAssistantAnswer({ tab, previousGroupCount, timeoutMs = 180_000, pollMs = 300, checkInterrupted }) {
@@ -696,13 +919,27 @@ export async function archiveConversation({ tab, provider, uiEvidence = false })
   }
 }
 
-export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false, imagePaths = [] }) {
+export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false, imagePaths = [], requestMetadata = {} }) {
   if (!tab?.playwright || typeof tab.url !== 'function') throw new Error('a controlled Browser tab is required');
+  const useSystemClipboard = !continuation && requestMetadata.text_transport === SYSTEM_CLIPBOARD_TEXT_TRANSPORT;
+  const clipboardReceipt = useSystemClipboard
+    ? { bytes: requestMetadata.clipboard_text_bytes, sha256: requestMetadata.clipboard_text_sha256 }
+    : null;
+  const verifyClipboardStage = stage => {
+    if (!useSystemClipboard) return;
+    verifiedSystemClipboardText({
+      expectedBytes: clipboardReceipt.bytes,
+      expectedSha256: clipboardReceipt.sha256,
+      stage,
+    });
+  };
+  verifyClipboardStage('adapter_start');
   const currentUrl = new URL(await tab.url());
   if (!continuation || currentUrl.hostname !== 'chatgpt.com') {
     await tab.goto(provider.url);
     await tab.playwright.waitForLoadState({ state: 'domcontentloaded', timeoutMs: 30_000 });
   }
+  verifyClipboardStage('post_navigation');
   const login = tab.playwright.getByRole('button', { name: '登录', exact: true });
   if (await locatorVisible(login)) {
     await unavailableWithEvidence({ tab, message: 'ChatGPT login is required', stage: 'login_check', provider, uiEvidence, names: ['登录'] });
@@ -713,6 +950,7 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
   }
   await runChatGptStageWithRecovery({ tab, action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'initial_recovery' }) });
   let selectedReasoning = await runChatGptStageWithRecovery({ tab, action: () => ensureConfiguredReasoningSelection({ tab, provider, uiEvidence, stage: 'initial_reasoning_selection' }) });
+  verifyClipboardStage('post_setup');
 
   const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');
   let previousGroupCount = await assistantGroups.count();
@@ -722,6 +960,7 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
   const attachmentState = imagePaths.length
     ? await pasteProviderImages({ tab, provider: 'ChatGPT', imagePaths, composer: input })
     : null;
+  let clipboardState = null;
 
   const checkInterrupted = async () => {
     if (!await locatorVisible(rateLimitDialog(tab))) return;
@@ -769,17 +1008,26 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
       promptPath,
       submit: async promptText => {
         const split = splitChatGptContext(promptText);
-        const useTwoStep = Boolean(split.context) && promptText.length >= CHATGPT_TWO_STEP_MIN_CHARS;
+        const useTwoStep = !useSystemClipboard && Boolean(split.context) && promptText.length >= CHATGPT_TWO_STEP_MIN_CHARS;
         if (useTwoStep) {
-          selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.context, onSendStarted: markSendStarted });
+          ({ reasoning: selectedReasoning } = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.context, onSendStarted: markSendStarted }));
           await runChatGptStageWithRecovery({
             tab,
             action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs: Math.min(timeoutMs, 120_000), checkInterrupted }),
           });
           previousGroupCount = await assistantGroups.count();
-          selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.instruction, onSendStarted: markSendStarted });
+          ({ reasoning: selectedReasoning } = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.instruction, onSendStarted: markSendStarted }));
         } else {
-          selectedReasoning = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: promptText, onSendStarted: markSendStarted });
+          ({ reasoning: selectedReasoning, clipboardState } = await submitChatGptComposer({
+            tab,
+            provider,
+            uiEvidence,
+            input,
+            text: promptText,
+            onSendStarted: markSendStarted,
+            textTransport: useSystemClipboard ? SYSTEM_CLIPBOARD_TEXT_TRANSPORT : 'direct_fill',
+            clipboardReceipt,
+          }));
         }
       },
     }));
@@ -808,6 +1056,14 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
     modelVerified: selectedReasoning.modelVerified,
     ...confirmedAssistantResponseMetadata(),
     promptRemoved,
+    clipboardPasteConfirmed: clipboardState?.clipboardPasteConfirmed === true,
+    clipboard_paste_confirmed: clipboardState?.clipboard_paste_confirmed === true,
+    clipboardSha256Confirmed: clipboardState?.clipboardSha256Confirmed === true,
+    clipboard_sha256_confirmed: clipboardState?.clipboard_sha256_confirmed === true,
+    clipboardInsertionMethod: clipboardState?.clipboardInsertionMethod || null,
+    clipboard_insertion_method: clipboardState?.clipboard_insertion_method || null,
+    clipboardFillFallbackUsed: clipboardState?.clipboardFillFallbackUsed === true,
+    clipboard_fill_fallback_used: clipboardState?.clipboard_fill_fallback_used === true,
     attachmentsReady: imagePaths.length > 0 ? attachmentState.ready : null,
     answer: text,
   };

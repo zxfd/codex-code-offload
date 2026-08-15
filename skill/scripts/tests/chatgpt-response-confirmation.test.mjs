@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import {
   archiveConversation,
   isChatGptAnswerGenerating,
   locateNewAssistantAnswer,
+  pasteSystemClipboardText,
   waitForNextAssistantAnswer,
 } from '../providers/chatgpt-web.mjs';
 import { assertChromeBrowser, isCoolingDown } from '../web-provider-runner.mjs';
@@ -219,4 +221,156 @@ test('Web-LLM runner accepts only the user Chrome browser', () => {
     () => assertChromeBrowser({ tabs: { new: async () => {} } }),
     /requires the user Chrome extension browser/,
   );
+});
+
+function makeClipboardPasteFixture({ systemText, pastedText = null, pressError = false, wrapPastedText = false }) {
+  const state = { composerText: 'stale', virtualClipboardText: '', events: [] };
+  const composer = {
+    async fill(value) { state.events.push(`fill:${value.length}`); state.composerText = value; },
+    async click() { state.events.push('click'); },
+    async press(key) {
+      state.events.push(`press:${key}`);
+      if (pressError) throw new Error('virtual clipboard paste failed');
+      if (key === 'ControlOrMeta+V') {
+        const value = pastedText ?? state.virtualClipboardText;
+        state.composerText = wrapPastedText ? `\n${value}\n` : value;
+      }
+    },
+    async evaluate() { return state.composerText; },
+  };
+  const tab = {
+    playwright: { async waitForTimeout() {} },
+    clipboard: {
+      async writeText(value) {
+        state.events.push(`clipboard:${value.length}`);
+        state.virtualClipboardText = value;
+      },
+    },
+  };
+  return { state, composer, tab, readSystemClipboardText: () => systemText };
+}
+
+test('ChatGPT system clipboard transport verifies the receipt and performs ControlOrMeta+V', async () => {
+  const text = '<section>空投奖励 USDT</section>';
+  const fixture = makeClipboardPasteFixture({ systemText: text });
+  const result = await pasteSystemClipboardText({
+    tab: fixture.tab,
+    composer: fixture.composer,
+    expectedBytes: Buffer.byteLength(text),
+    expectedSha256: createHash('sha256').update(text).digest('hex'),
+    readSystemClipboardText: fixture.readSystemClipboardText,
+  });
+  assert.equal(result.clipboardPasteConfirmed, true);
+  assert.equal(result.clipboardSha256Confirmed, true);
+  assert.equal(result.clipboardInsertionMethod, 'virtual_clipboard_paste');
+  assert.equal(result.clipboardFillFallbackUsed, false);
+  assert.deepEqual(fixture.state.events, [
+    'fill:0',
+    'click',
+    `clipboard:${text.length}`,
+    'press:ControlOrMeta+V',
+    'clipboard:0',
+  ]);
+});
+
+test('ChatGPT system clipboard verification ignores composer boundary whitespace', async () => {
+  const text = '<section>空投奖励 USDT</section>';
+  const fixture = makeClipboardPasteFixture({ systemText: text, wrapPastedText: true });
+  const result = await pasteSystemClipboardText({
+    tab: fixture.tab,
+    composer: fixture.composer,
+    expectedBytes: Buffer.byteLength(text),
+    expectedSha256: createHash('sha256').update(text).digest('hex'),
+    readSystemClipboardText: fixture.readSystemClipboardText,
+  });
+  assert.equal(result.clipboardPasteConfirmed, true);
+  assert.equal(result.clipboardSha256Confirmed, true);
+});
+
+test('ChatGPT system clipboard transport fills only after an empty swallowed paste', async () => {
+  const text = '<section>空投奖励 USDT</section>';
+  const fixture = makeClipboardPasteFixture({ systemText: text, pastedText: '' });
+  const result = await pasteSystemClipboardText({
+    tab: fixture.tab,
+    composer: fixture.composer,
+    expectedBytes: Buffer.byteLength(text),
+    expectedSha256: createHash('sha256').update(text).digest('hex'),
+    timeoutMs: 100,
+    swallowedPasteGraceMs: 0,
+    readSystemClipboardText: fixture.readSystemClipboardText,
+  });
+  assert.equal(result.clipboardPasteConfirmed, true);
+  assert.equal(result.clipboardSha256Confirmed, true);
+  assert.equal(result.clipboardInsertionMethod, 'verified_fill_after_swallowed_paste');
+  assert.equal(result.clipboardFillFallbackUsed, true);
+  assert.deepEqual(fixture.state.events, [
+    'fill:0',
+    'click',
+    `clipboard:${text.length}`,
+    'press:ControlOrMeta+V',
+    `fill:${text.length}`,
+    'clipboard:0',
+  ]);
+});
+
+test('ChatGPT system clipboard transport fails after paste when the composer digest mismatches', async () => {
+  const text = '<section>expected</section>';
+  const fixture = makeClipboardPasteFixture({ systemText: text, pastedText: '<section>wrong</section>' });
+  await assert.rejects(
+    pasteSystemClipboardText({
+      tab: fixture.tab,
+      composer: fixture.composer,
+      expectedBytes: Buffer.byteLength(text),
+      expectedSha256: createHash('sha256').update(text).digest('hex'),
+      timeoutMs: 1,
+      swallowedPasteGraceMs: 0,
+      readSystemClipboardText: fixture.readSystemClipboardText,
+    }),
+    /paste could not be confirmed/u,
+  );
+  assert.deepEqual(fixture.state.events, [
+    'fill:0',
+    'click',
+    `clipboard:${text.length}`,
+    'press:ControlOrMeta+V',
+    'clipboard:0',
+  ]);
+});
+
+test('ChatGPT system clipboard transport rejects a changed system clipboard before paste', async () => {
+  const expected = '<section>expected</section>';
+  const fixture = makeClipboardPasteFixture({ systemText: '<section>changed</section>' });
+  await assert.rejects(
+    pasteSystemClipboardText({
+      tab: fixture.tab,
+      composer: fixture.composer,
+      expectedBytes: Buffer.byteLength(expected),
+      expectedSha256: createHash('sha256').update(expected).digest('hex'),
+      readSystemClipboardText: fixture.readSystemClipboardText,
+    }),
+    /system clipboard receipt mismatch/u,
+  );
+  assert.deepEqual(fixture.state.events, []);
+});
+
+test('ChatGPT system clipboard bridge failures do not poison Provider health', async () => {
+  const text = '<section>expected</section>';
+  const fixture = makeClipboardPasteFixture({ systemText: text, pressError: true });
+  await assert.rejects(
+    pasteSystemClipboardText({
+      tab: fixture.tab,
+      composer: fixture.composer,
+      expectedBytes: Buffer.byteLength(text),
+      expectedSha256: createHash('sha256').update(text).digest('hex'),
+      readSystemClipboardText: fixture.readSystemClipboardText,
+    }),
+    error => error?.failureClass === 'clipboard_transport_failed' && error?.cacheFailure === false,
+  );
+  assert.deepEqual(fixture.state.events, [
+    'fill:0',
+    'click',
+    `clipboard:${text.length}`,
+    'press:ControlOrMeta+V',
+    'clipboard:0',
+  ]);
 });

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export const MAX_DOM_BYTES = 2_000_000;
 const MANAGED_PREFIXES = ['codex-web-ingest-', 'codex-web-llm-page-extract-'];
@@ -12,6 +14,11 @@ const FULL_DOCUMENT = /<!doctype\s+html|<html(?:\s|>)|<head(?:\s|>)|<body(?:\s|>
 
 function fail(message) {
   throw new Error(message);
+}
+
+function utf8ClipboardEnvironment() {
+  const inherited = typeof process !== 'undefined' && process?.env ? process.env : {};
+  return { ...inherited, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' };
 }
 
 function parseHttpUrl(value, label) {
@@ -132,14 +139,21 @@ export function readBoundedDomArtifact(inputPath, maxBytes = MAX_DOM_BYTES) {
 
 export function copyDomToClipboard(inputPath, { maxBytes = MAX_DOM_BYTES, dryRun = false, spawn = spawnSync } = {}) {
   const prepared = readBoundedDomArtifact(inputPath, maxBytes);
-  if (dryRun) return { ...prepared, clipboardWritten: false, dryRun: true };
-  if (process.platform !== 'darwin') fail('system clipboard writing requires macOS (pbcopy); Web-LLM was not called');
-  const result = spawn('pbcopy', [], { input: prepared.text, encoding: 'utf8', stdio: ['pipe', 'ignore', 'pipe'] });
+  const { text, ...metadata } = prepared;
+  const sha256 = createHash('sha256').update(text).digest('hex');
+  if (dryRun) return { ...metadata, sha256, clipboardWritten: false, dryRun: true };
+  if (platform() !== 'darwin') fail('system clipboard writing requires macOS (pbcopy); Web-LLM was not called');
+  const result = spawn('pbcopy', [], {
+    input: prepared.text,
+    encoding: 'utf8',
+    env: utf8ClipboardEnvironment(),
+    stdio: ['pipe', 'ignore', 'pipe'],
+  });
   if (result.error || result.status !== 0) {
     const detail = result.error?.message || String(result.stderr || '').trim() || ('exit ' + result.status);
     fail('pbcopy failed: ' + detail + '; Web-LLM was not called');
   }
-  return { ...prepared, clipboardWritten: true, dryRun: false };
+  return { ...metadata, sha256, clipboardWritten: true, dryRun: false };
 }
 
 export function parseArgs(argv = process.argv.slice(2)) {
@@ -162,14 +176,19 @@ export function parseArgs(argv = process.argv.slice(2)) {
   return options;
 }
 
-if (import.meta.url === 'file://' + process.argv[1]) {
+function isMainModule() {
+  if (typeof process === 'undefined' || !process?.argv?.[1]) return false;
+  return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+}
+
+if (isMainModule()) {
   try {
     const options = parseArgs();
     if (options.help) {
       console.log('Usage: copy-dom-to-clipboard.mjs --input /absolute/path/dom.json [--max-bytes N] [--dry-run]');
     } else {
       const result = copyDomToClipboard(options.input, options);
-      console.log(JSON.stringify({ status: 'ready', sourceUrl: result.sourceUrl, domScope: result.domScope, bytes: result.bytes, clipboardWritten: result.clipboardWritten, dryRun: result.dryRun }));
+      console.log(JSON.stringify({ status: 'ready', sourceUrl: result.sourceUrl, domScope: result.domScope, bytes: result.bytes, sha256: result.sha256, clipboardWritten: result.clipboardWritten, dryRun: result.dryRun }));
     }
   } catch (error) {
     console.error('copy-dom-to-clipboard failed: ' + error.message);

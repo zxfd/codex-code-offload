@@ -38,6 +38,8 @@ test('valid bounded same-origin artifact passes dry-run without clipboard I/O', 
     assert.equal(result.clipboardWritten, false);
     assert.equal(result.sourceUrl, 'https://example.test/article');
     assert.equal(result.domScope, 'article[data-task-section]');
+    assert.match(result.sha256, /^[a-f0-9]{64}$/u);
+    assert.equal('text' in result, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -88,6 +90,29 @@ test('clipboard command failure is surfaced without a Web-LLM fallback', () => {
     assert.throws(() => copyDomToClipboard(path, {
       spawn: () => ({ status: 1, stderr: 'simulated pbcopy failure' }),
     }), /pbcopy failed/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('clipboard command uses an explicit UTF-8 locale for multilingual DOM text', () => {
+  const { dir, path } = fixture(validPayload());
+  try {
+    if (process.platform !== 'darwin') return;
+    let invocation;
+    const result = copyDomToClipboard(path, {
+      spawn(command, args, options) {
+        invocation = { command, args, options };
+        return { status: 0, stderr: '' };
+      },
+    });
+    assert.equal(result.clipboardWritten, true);
+    assert.equal(invocation.command, 'pbcopy');
+    assert.deepEqual(invocation.args, []);
+    assert.equal(invocation.options.encoding, 'utf8');
+    assert.equal(invocation.options.env.LANG, 'en_US.UTF-8');
+    assert.equal(invocation.options.env.LC_ALL, 'en_US.UTF-8');
+    assert.equal(invocation.options.input, '<article data-task-section>必要数据</article>');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
