@@ -27,7 +27,7 @@
 
 仓库任务必须绑定发起调用所在的本地项目。任务包强制携带 `caller_project_id` 与 `caller_project_path`；跨项目调用必须携带调用方项目的这两个字段，不能让协调窗口项目接管归属。先用 `codex_app__list_projects` 按规范化绝对路径精确匹配 `caller_project_path`，并确认返回 `projectId` 与 `caller_project_id` 相同；缺失、无法解析、无精确匹配、项目类型不符或调用方与 Thread 项目不一致时 `fail-closed`，不创建、不运行、不验收。
 
-创建时必须使用 `target.type=project`、匹配调用方的 `target.projectId` 和 `target.environment.type=local`。明确禁止 `projectless`、`chatgptWorkCloud`、聊天目标和无项目目标。初始 prompt 必须标记 `TASK_KIND: work_task`，明确这是工作任务；Git 项目按调用方记录的 `isGitRepository` 使用本地 `worktree`（默认）或 `local`。创建后先确认真实 `threadId`、`hostId` 及 Thread 项目身份，再进入等待、读取、验收和归档生命周期。
+创建时必须使用 `target.type=project`、匹配调用方的 `target.projectId` 和 `target.environment.type=local`。明确禁止 `projectless`、`chatgptWorkCloud`、聊天目标和无项目目标。初始 prompt 必须标记 `TASK_KIND: work_task`，明确这是工作任务；Git 项目按调用方记录的 `isGitRepository` 使用 `target.environment.workspace.type=worktree`，非 Git 项目使用 `target.environment.workspace.type=local`。创建后先确认真实、非空 `threadId`、`hostId` 及 Thread 项目身份，再进入等待、读取、验收和归档生命周期。
 
 仓库任务固定执行：
 
@@ -40,7 +40,7 @@
 7. 主 Agent 验收
 8. `codex_app__set_thread_archived(threadId, hostId, archived=true)`，并确认返回已归档
 
-任何 Thread 创建失败、标识不真实、回执缺失超过一个具体字段或验收冲突，都不得在协调窗口补做。按同一 `route_id` 递增 `attempt` 选择合格回退或返回 `blocked`。
+任何 Thread 创建失败、只有 `clientThreadId`、标识不真实、项目 ID/path 冲突、解析超时、缺字段、多候选、回执缺失超过一个具体字段或验收冲突，都不得在协调窗口补做。`clientThreadId` 不得传给 wait/read/send/archive，也不得通过标题、时间、项目名、cwd 或 `list_threads` 顺序猜测真实 Thread。按同一 `route_id` 递增 `attempt` 选择合格回退或返回 `blocked`。
 
 ## 串行、并行与组合
 

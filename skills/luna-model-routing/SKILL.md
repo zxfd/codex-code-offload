@@ -63,7 +63,7 @@ target.environment.type = local
 
 任务包的初始 prompt 必须明确 `TASK_KIND: work_task`，并写明调用方仓库路径、允许范围和验收条件；不得使用“聊天”“chat”或其他仅会话语义替代工作任务。若项目是 Git 仓库，遵循调用方项目记录的 `isGitRepository` 规则选择 `worktree`，否则使用 `local`；两者都必须保持在调用方项目的本地环境内。
 
-创建返回后，必须在进入等待和读取前确认真实 `threadId`、`hostId`，并核对 Thread 返回的项目身份与 `caller_project_id`、`caller_project_path` 一致。项目类型不是 `project`、环境不是 `local`、项目 ID 缺失或不一致、项目路径无法解析或不一致，均为 `fail-closed`；不得在错误归属 Thread 中运行、验收或把它当作成功结果。
+创建返回后，必须在进入等待和读取前确认真实、非空的 `threadId`、`hostId`，并核对 Thread 返回的项目身份与 `caller_project_id`、`caller_project_path` 一致。项目类型不是 `project`、环境不是 `local`、项目 ID 缺失或不一致、项目路径无法解析或不一致，均为 `fail-closed`；不得在错误归属 Thread 中运行、验收或把它当作成功结果。Git 项目统一使用 `target.environment.workspace.type=worktree`，非 Git 项目统一使用 `target.environment.workspace.type=local`。
 
 仓库任务需要路由时，严格按以下顺序执行，不得跳过、替换或插入非 Thread 载体：
 
@@ -78,7 +78,11 @@ target.environment.type = local
 
 每个 `Worker` 都必须遵守同一生命周期；`model`、`thinking`、`project` 和任务包随实际任务填写。只有 `codex_app__create_thread` 返回且可被后续 Thread 工具解析的真实 `threadId` 与 `hostId` 才算创建成功。空值、占位值、不可读取状态或只有 `clientThreadId` 都只能表示准备中。
 
-`clientThreadId` 必须先解析为真实 Thread，不能传给要求 `threadId` 的工具，也不能据此报告成功、开始验收或转交给协调窗口。解析失败时按回退矩阵返回 `blocked`；协调 Agent 不接管。
+`clientThreadId` 只是创建过程的 pending setup handle；不得传给要求 `threadId` 的 wait/read/send/archive 工具，也不得据此报告成功、开始验收或转交给协调窗口。只有 `create_thread` 返回的 ready `threadId`+`hostId`，或未来专用精确 resolver 明确返回的同等 ready 身份，才可进入后续生命周期。不得用标题、时间、项目名、cwd、`list_threads` 顺序或多候选猜测真实 Thread。解析接口不存在、超时、缺字段、多候选、项目 ID/path 冲突时均 `blocked`；协调 Agent 不接管。
+
+### Thread 身份校验硬门槛
+
+调用方项目必须同时满足：`projectId === caller_project_id`，以及经路径规范化后的绝对路径 `=== caller_project_path`；cwd 不是稳定身份。创建目标必须是 `target.type=project`、匹配的 `target.projectId`、`target.environment.type=local`，并按项目是否 Git 使用上述 `worktree` 或 `local` 嵌套结构。ready Thread 还必须携带非空 `threadId`、`hostId`，且再次通过同一组项目精确匹配；任一条件不满足即 fail-closed。
 
 等待期间不得在协调窗口并行执行已分发工作。一次具体续问只能发送缺失字段，不能重发完整输入，不能创建替代路线来绕过 Thread 生命周期。
 

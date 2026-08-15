@@ -86,7 +86,7 @@ target.environment.type = local
 
 明确禁止 `target.type=projectless`、`target.type=chatgptWorkCloud`、聊天目标以及任何无项目目标。初始 prompt 必须包含 `TASK_KIND: work_task`，并将目标描述为可验收的工作任务；不得把新 Thread 创建成聊天。Git 项目仍按调用方项目的 `list_projects.isGitRepository` 选择 `worktree`（默认）或 `local`，但不能离开调用方项目的本地环境。
 
-创建返回后，在第 4 步等待前必须确认真实且可解析的 `threadId` 与 `hostId`，并核对 Thread 的项目 ID、规范化路径、目标类型和环境分别为 `caller_project_id`、`caller_project_path`、`project`、`local`。只有 `clientThreadId`、空值或无法读取的 Thread 身份不能作为成功凭证；任何归属字段不一致都必须 `fail-closed`，不得继续工作或把结果转交协调窗口。
+创建返回后，在第 4 步等待前必须确认真实且可解析的非空 `threadId` 与 `hostId`，并核对 Thread 的项目 ID、规范化路径、目标类型和环境分别为 `caller_project_id`、`caller_project_path`、`project`、`local`。Git 项目的目标嵌套结构必须是 `target.environment.workspace.type=worktree`；非 Git 项目必须是 `target.environment.workspace.type=local`。只有 `clientThreadId`、空值或无法读取的 Thread 身份不能作为成功凭证；任何归属字段不一致都必须 `fail-closed`，不得继续工作或把结果转交协调窗口。
 
 仓库任务严格执行以下顺序：
 
@@ -99,7 +99,9 @@ target.environment.type = local
 7. 主 Agent 验收
 8. `codex_app__set_thread_archived(threadId, hostId, archived=true)`，并验证返回状态为已归档
 
-只有非空、真实且能被 Thread 工具解析的 `threadId` 和 `hostId` 才算成功创建。`clientThreadId` 只能表示准备中；必须先解析成真实 Thread，不能传给要求 `threadId` 的工具，不能作为成功凭证，不能开始验收，也不能交由协调 Agent 接管。解析失败返回 `blocked`，不得用非 Thread 方式补做。
+只有 `create_thread` 返回的非空、真实且能被 Thread 工具解析的 ready `threadId` 和 `hostId` 才算成功创建。`clientThreadId` 只能表示准备中的 setup handle；不得传给 `wait`、`read`、`send` 或 `archive`，不能作为成功凭证、不能开始验收，也不能交由协调 Agent 接管。若未来提供专用精确 resolver，只能使用其明确返回的唯一 ready `threadId`+`hostId`；resolver 不存在、超时、缺字段、多候选或项目身份冲突均返回 `blocked`。不得用标题、时间、项目名、cwd 或 `list_threads` 顺序猜测或解析 Thread。
+
+项目身份校验必须同时精确匹配 `caller_project_id` 与规范化绝对 `caller_project_path`；cwd 不是稳定身份。禁止 projectless、聊天、云端目标，以及任何未通过 `target.type=project`、匹配 `projectId`、`environment.type=local` 和 Git/non-Git workspace 类型校验的 Thread。
 
 等待期间协调 Agent 不执行已分发任务。续问只能补齐一个具体缺失字段，不得重发完整任务包；若仍失败，按 `fallback_policy` 或 `blocked` 结束。同一路由的续问和回退保持 `route_id`，并递增 `attempt`。
 
