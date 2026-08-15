@@ -24,7 +24,7 @@ Apply these stable repository conventions. Let more specific project rules and p
 - Before a commit, inspect the task-relevant diff, run the smallest sufficient verification, stage only task files or hunks, and confirm that the commit is non-empty and free of unrelated changes.
 - Make a separate commit only for a key, independently verifiable unit. Do not commit mechanically after minor edits or split solely to reach a commit count.
 - Use Conventional Commit / Angular-style subjects by default: `type(scope): 中文概要`.
-- Create local commits when appropriate. Every completed local commit must be pushed immediately to the configured upstream branch (`HEAD` -> `@{u}`) as part of the standard flow.
+- 每次功能开发完成且验收成功后，必须先按既有提交前检查完成提交，再立即推送到当前配置的上游分支（`HEAD` -> `@{u}`）；不得把“适时提交”解释为可以跳过提交或推送。
 - Keep the pre-commit checks above unchanged.
 - Do not perform force-push, publish non-target branches, or any unrelated remote action.
 - If no upstream is configured, stop and report the failure with the branch context; do not continue.
