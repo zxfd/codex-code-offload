@@ -50,6 +50,10 @@ Web-LLM 是推理层，不是执行者。达到 token gate 的 `reasoner` 默认
 
 Provider 链在单一分支内串行，Web-LLM 默认并发 1，只有互不依赖且当前运行时已验证安全时最多 2。Web-LLM 只返回结构化推理结果；主 Agent在本地执行和验证。
 
+### Web-LLM 等待预算
+
+当前 Web-LLM Provider 的回答等待预算默认为 600 秒；确认启用深度思考后，DeepSeek 对 350K 保留输出配置最多等待 900 秒，其他深度思考请求至少等待 720 秒。ChatGPT 两步长上下文的中间回答也沿用完整请求预算，不再使用 120 秒硬上限。停止生成控件仍是“正在生成”的权威信号。该调整用于避免把实际上仍可用的通道误判为超时，不能对外部 Provider、浏览器登录态或网络状态承诺绝对 99% 成功率。
+
 所有合格 Web-LLM 文本 Provider 失败后，才允许一次 `deepseek-v4-pro-deepseek` 纯文本回退。视觉 Provider 全失败时不得用纯文本模型声称看过像素。宿主 Codex 输出不得冒充 `model_source=web_provider`。
 
 ## 模型与成本

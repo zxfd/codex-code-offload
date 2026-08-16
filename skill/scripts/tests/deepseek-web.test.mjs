@@ -134,16 +134,16 @@ test('DeepSeek enables expert mode and deep thinking before sending', async () =
 test('DeepSeek extends wait timeout when deep-thinking is enabled', () => {
   assert.equal(resolveDeepSeekAnswerTimeout({
     provider: { target: { deep_thinking: true, reserved_output_tokens: 350_000 } },
-    timeoutMs: 180_000,
-  }), 420_000);
+    timeoutMs: 600_000,
+  }), 900_000);
   assert.equal(resolveDeepSeekAnswerTimeout({
     provider: { target: { deep_thinking: true, reserved_output_tokens: 180_000 } },
-    timeoutMs: 180_000,
-  }), 300_000);
+    timeoutMs: 600_000,
+  }), 720_000);
   assert.equal(resolveDeepSeekAnswerTimeout({
     provider: { target: { deep_thinking: false, reserved_output_tokens: 350_000 } },
-    timeoutMs: 180_000,
-  }), 180_000);
+    timeoutMs: 600_000,
+  }), 600_000);
 });
 
 test('DeepSeek deletes the terminal conversation before the tab is closed', async () => {

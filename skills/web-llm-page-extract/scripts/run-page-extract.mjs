@@ -194,7 +194,7 @@ export async function runWebLlmPageExtract({
   baseProviderConfigPath,
   providerId,
   requestId = randomUUID(),
-  timeoutMs = 180_000,
+  timeoutMs = 600_000,
   stateDir,
   uiEvidence = true,
   minimumTermGroups = 2,

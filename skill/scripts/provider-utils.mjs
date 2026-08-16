@@ -276,7 +276,9 @@ async function readAssistantAnswerText(answer) {
   return innerText;
 }
 
-export async function waitForAssistantAnswer({ answer, stopButtons = [], timeoutMs = 180_000, checkInterrupted }) {
+export const DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS = 600_000;
+
+export async function waitForAssistantAnswer({ answer, stopButtons = [], timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS, checkInterrupted }) {
   const deadline = Date.now() + timeoutMs;
   await waitForVisibleAnswer(answer, deadline, checkInterrupted);
   let previous = '';

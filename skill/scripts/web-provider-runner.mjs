@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import {
   ProviderUnavailableError,
+  DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS,
   makeAttemptPrompt,
   removeUiEvidenceArtifact,
   removePrompt,
@@ -301,7 +302,7 @@ export async function runProviderFallback({
   requestMetadata = {},
   configPath = DEFAULT_CONFIG_PATH,
   stateDir = DEFAULT_STATE_DIR,
-  timeoutMs = 180_000,
+  timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS,
   tabs = new Map(),
   uiEvidence = false,
   imagePaths = [],

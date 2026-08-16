@@ -115,7 +115,7 @@ For every Provider, a first-round request uses its own new Chrome tab and must c
 
 DeepSeek's official service context window is 1M tokens, but its limit covers the combined input and generated output. The configured browser guard therefore reserves 350K tokens for reasoning/output and skips DeepSeek before opening the page when a deliberately conservative local estimate exceeds 650K input tokens. A skipped request records `input_token_budget` and continues to Qwen; it does not mark DeepSeek unhealthy.
 
-Because `深度思考` can take longer to finish, the DeepSeek Adapter resolves the answer wait budget after confirming the toggle: the configured 350K reserved-output profile allows up to 420 seconds, while other deep-thinking requests receive at least 300 seconds. The stop-generation control remains authoritative during this extended wait.
+Web-LLM answer waits use a 600-second default. Because `深度思考` can take longer to finish, the DeepSeek Adapter resolves the answer wait budget after confirming the toggle: the configured 350K reserved-output profile allows up to 900 seconds, while other deep-thinking requests receive at least 720 seconds. The stop-generation control remains authoritative during this extended wait. These budgets reduce false timeout fallbacks for a usable Provider; they cannot guarantee a 99% success rate against external service, browser, login, or network failures.
 
 ## 4. Start a LEVEL 1 request
 

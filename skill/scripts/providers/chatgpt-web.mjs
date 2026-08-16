@@ -7,6 +7,7 @@ import { confirmedAssistantResponseMetadata } from '../provider-response.mjs';
 
 import {
   captureSemanticUiEvidence,
+  DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS,
   locatorVisible,
   removeUiEvidenceArtifact,
   requireVisible,
@@ -794,7 +795,7 @@ async function submitChatGptComposer({
   return { reasoning, clipboardState };
 }
 
-export async function locateNewAssistantAnswer({ tab, previousGroupCount, timeoutMs = 180_000, pollMs = 300, checkInterrupted }) {
+export async function locateNewAssistantAnswer({ tab, previousGroupCount, timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS, pollMs = 300, checkInterrupted }) {
   const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -919,7 +920,7 @@ export async function archiveConversation({ tab, provider, uiEvidence = false })
   }
 }
 
-export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false, imagePaths = [], requestMetadata = {} }) {
+export async function run({ provider, tab, promptPath, timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS, continuation = false, uiEvidence = false, imagePaths = [], requestMetadata = {} }) {
   if (!tab?.playwright || typeof tab.url !== 'function') throw new Error('a controlled Browser tab is required');
   const useSystemClipboard = !continuation && requestMetadata.text_transport === SYSTEM_CLIPBOARD_TEXT_TRANSPORT;
   const clipboardReceipt = useSystemClipboard
@@ -1013,7 +1014,7 @@ export async function run({ provider, tab, promptPath, timeoutMs = 180_000, cont
           ({ reasoning: selectedReasoning } = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.context, onSendStarted: markSendStarted }));
           await runChatGptStageWithRecovery({
             tab,
-            action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs: Math.min(timeoutMs, 120_000), checkInterrupted }),
+            action: () => waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs, checkInterrupted }),
           });
           previousGroupCount = await assistantGroups.count();
           ({ reasoning: selectedReasoning } = await submitChatGptComposer({ tab, provider, uiEvidence, input, text: split.instruction, onSendStarted: markSendStarted }));

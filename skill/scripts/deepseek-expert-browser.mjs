@@ -3,6 +3,7 @@ import {
   requireVisible,
   submitPromptFromFile,
   unavailable,
+  DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS,
   waitForAssistantAnswer,
 } from './provider-utils.mjs';
 import { confirmedAssistantResponseMetadata } from './provider-response.mjs';
@@ -12,8 +13,8 @@ const DEEPSEEK_HOME_URL = 'https://chat.deepseek.com/';
 const DEEPSEEK_CONVERSATION_PATH_PREFIX = '/a/chat/s/';
 const DEEPSEEK_DELETE_LABEL = '删除';
 const DEEPSEEK_DELETE_CONFIRM_LABEL = '删除该对话';
-const DEEPSEEK_DEEP_THINKING_DEFAULT_TIMEOUT_MS = 180_000;
-const DEEPSEEK_DEEP_THINKING_EXTENDED_TIMEOUT_MS = 420_000;
+const DEEPSEEK_DEEP_THINKING_DEFAULT_TIMEOUT_MS = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS;
+const DEEPSEEK_DEEP_THINKING_EXTENDED_TIMEOUT_MS = 900_000;
 
 export function resolveDeepSeekAnswerTimeout({
   provider,
@@ -113,7 +114,7 @@ export async function archiveConversation({ tab, provider }) {
   };
 }
 
-export async function runDeepSeekExpert({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false }) {
+export async function runDeepSeekExpert({ provider, tab, promptPath, timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS, continuation = false }) {
   if (!tab?.playwright || typeof tab.url !== 'function') throw new Error('a controlled in-app Browser tab is required');
   if (provider?.target?.deep_thinking !== true) {
     unavailable('DeepSeek provider requires deep_thinking=true');

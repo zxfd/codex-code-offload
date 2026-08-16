@@ -9,6 +9,7 @@ import {
   unavailable,
   waitForComposerSettled,
   waitForAssistantAnswer,
+  DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS,
 } from '../provider-utils.mjs';
 
 export const QWEN_COMPOSER_NAMES = ['有什么我能帮您的吗？', 'How can I help you?'];
@@ -349,7 +350,7 @@ async function waitForSubmissionProof({ composer, userMessages, previousUserMess
   return false;
 }
 
-export async function run({ provider, tab, promptPath, timeoutMs = 180_000, continuation = false, uiEvidence = false, imagePaths = [] }) {
+export async function run({ provider, tab, promptPath, timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS, continuation = false, uiEvidence = false, imagePaths = [] }) {
   if (!tab?.playwright || typeof tab.url !== 'function') throw new Error('a controlled Chrome tab is required');
   const currentUrl = new URL(await tab.url());
   if (!continuation || currentUrl.hostname !== 'chat.qwen.ai') {
