@@ -13,6 +13,8 @@ description: 强制把当前会话限制为控制面，并把源码、文件、�
 
 本 Skill 只规定职责划分、任务包、Thread 生命周期、传输、回执、回退和验收状态；不替代 `skill-creator`、`repo-execution` 或任何领域 Skill，也不产生、复制、转移或放宽审批。
 
+第一版通用任务接口、token gate、成本预算与并发上限见 [通用任务契约](references/generic-task-contract.md)。默认使用 `scout → reasoner → verifier`；这只是任务契约，不是自定义 Agent profile。
+
 ## 协调 Agent 的唯一职责
 
 协调 Agent 只能按以下边界工作：
@@ -58,12 +60,13 @@ caller_project_path = <发起调用方项目的绝对路径引用>
 ```text
 target.type = project
 target.projectId = <list_projects 返回且与 caller_project_path 匹配的 caller_project_id>
-target.environment.type = local
+target.environment.type = worktree  # Git 项目
+target.environment.type = local     # 非 Git 项目
 ```
 
 任务包的初始 prompt 必须明确 `TASK_KIND: work_task`，并写明调用方仓库路径、允许范围和验收条件；不得使用“聊天”“chat”或其他仅会话语义替代工作任务。若项目是 Git 仓库，遵循调用方项目记录的 `isGitRepository` 规则选择 `worktree`，否则使用 `local`；两者都必须保持在调用方项目的本地环境内。
 
-创建返回后，必须在进入等待和读取前确认真实、非空的 `threadId`、`hostId`，并核对 Thread 返回的项目身份与 `caller_project_id`、`caller_project_path` 一致。项目类型不是 `project`、环境不是 `local`、项目 ID 缺失或不一致、项目路径无法解析或不一致，均为 `fail-closed`；不得在错误归属 Thread 中运行、验收或把它当作成功结果。Git 项目统一使用 `target.environment.workspace.type=worktree`，非 Git 项目统一使用 `target.environment.workspace.type=local`。
+创建返回后，必须在进入等待和读取前确认真实、非空的 `threadId`、`hostId`，并核对 Thread 返回的项目身份与 `caller_project_id`、`caller_project_path` 一致。项目类型不是 `project`、环境类型不是 Git 项目的 `worktree` 或非 Git 项目的 `local`、项目 ID 缺失或不一致、项目路径无法解析或不一致，均为 `fail-closed`；不得在错误归属 Thread 中运行、验收或把它当作成功结果。环境类型必须直接位于 `target.environment.type`；旧的嵌套 `workspace` 结构一律拒绝。
 
 仓库任务需要路由时，严格按以下顺序执行，不得跳过、替换或插入非 Thread 载体：
 
@@ -82,7 +85,7 @@ target.environment.type = local
 
 ### Thread 身份校验硬门槛
 
-调用方项目必须同时满足：`projectId === caller_project_id`，以及经路径规范化后的绝对路径 `=== caller_project_path`；cwd 不是稳定身份。创建目标必须是 `target.type=project`、匹配的 `target.projectId`、`target.environment.type=local`，并按项目是否 Git 使用上述 `worktree` 或 `local` 嵌套结构。ready Thread 还必须携带非空 `threadId`、`hostId`，且再次通过同一组项目精确匹配；任一条件不满足即 fail-closed。
+调用方项目必须同时满足：`projectId === caller_project_id`，以及经路径规范化后的绝对路径 `=== caller_project_path`；cwd 不是稳定身份。创建目标必须是 `target.type=project`、匹配的 `target.projectId`，并按项目是否 Git 使 `target.environment.type` 精确等于 `worktree` 或 `local`。ready Thread 还必须携带非空 `threadId`、`hostId`，且再次通过同一组项目精确匹配；任一条件不满足即 fail-closed。旧的 `environment.workspace` 结构不属于有效契约。
 
 等待期间不得在协调窗口并行执行已分发工作。一次具体续问只能发送缺失字段，不能重发完整输入，不能创建替代路线来绕过 Thread 生命周期。
 

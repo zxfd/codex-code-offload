@@ -2,6 +2,8 @@
 
 本矩阵先按任务内容选择 `work_class`，再选择唯一 `owner`。所有任务工作都必须由独立 `Codex App Thread` 承载，所有内部 `transport` 都是 `codex_thread`；协调 Agent 没有任务执行路由。
 
+在 `work_class` 之外，调用方必须使用一个通用 contract：只读定位用 `scout`，跨源/跨文件综合用 `reasoner`，独立核验用 `verifier`。contract 的 token gate 和并发预算见 [generic-task-contract.md](generic-task-contract.md)。
+
 ## 选择矩阵
 
 | 条件 | `work_class` | `owner` | `transport` | 约束 |
@@ -27,7 +29,7 @@
 
 仓库任务必须绑定发起调用所在的本地项目。任务包强制携带 `caller_project_id` 与 `caller_project_path`；跨项目调用必须携带调用方项目的这两个字段，不能让协调窗口项目接管归属。先用 `codex_app__list_projects` 按规范化绝对路径精确匹配 `caller_project_path`，并确认返回 `projectId` 与 `caller_project_id` 相同；缺失、无法解析、无精确匹配、项目类型不符或调用方与 Thread 项目不一致时 `fail-closed`，不创建、不运行、不验收。
 
-创建时必须使用 `target.type=project`、匹配调用方的 `target.projectId` 和 `target.environment.type=local`。明确禁止 `projectless`、`chatgptWorkCloud`、聊天目标和无项目目标。初始 prompt 必须标记 `TASK_KIND: work_task`，明确这是工作任务；Git 项目按调用方记录的 `isGitRepository` 使用 `target.environment.workspace.type=worktree`，非 Git 项目使用 `target.environment.workspace.type=local`。创建后先确认真实、非空 `threadId`、`hostId` 及 Thread 项目身份，再进入等待、读取、验收和归档生命周期。
+创建时必须使用 `target.type=project`、匹配调用方的 `target.projectId`，并使 `target.environment.type` 按 `isGitRepository` 精确为 `worktree` 或 `local`。明确禁止 `projectless`、`chatgptWorkCloud`、聊天目标和无项目目标。初始 prompt 必须标记 `TASK_KIND: work_task`，明确这是工作任务；环境类型直接位于 `target.environment.type`，旧的嵌套 `environment.workspace` 结构一律拒绝。创建后先确认真实、非空 `threadId`、`hostId` 及 Thread 项目身份，再进入等待、读取、验收和归档生命周期。
 
 仓库任务固定执行：
 

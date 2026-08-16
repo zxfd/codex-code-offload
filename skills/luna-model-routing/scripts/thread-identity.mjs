@@ -28,14 +28,11 @@ function targetIdentity(value) {
   const environment = target.environment && typeof target.environment === 'object'
     ? target.environment
     : null;
-  const workspace = environment?.workspace && typeof environment.workspace === 'object'
-    ? environment.workspace
-    : null;
   return {
     type: target.type ?? null,
     projectId: nonEmptyString(target.projectId),
     environmentType: environment?.type ?? null,
-    workspaceType: workspace?.type ?? null,
+    hasLegacyWorkspace: Boolean(environment && Object.hasOwn(environment, 'workspace')),
   };
 }
 
@@ -59,15 +56,15 @@ export function validateProjectTarget(target, {
 } = {}) {
   const expectedPath = normalizeProjectPath(callerProjectPath);
   const targetInfo = targetIdentity(target);
-  const workspaceType = isGitRepository ? 'worktree' : 'local';
+  const environmentType = isGitRepository ? 'worktree' : 'local';
   const project = projectIdentity(target);
   return {
     ok: Boolean(
       matchesCallerProject(project, { callerProjectId, callerProjectPath })
       && targetInfo?.type === 'project'
       && targetInfo.projectId === callerProjectId
-      && targetInfo.environmentType === 'local'
-      && targetInfo.workspaceType === workspaceType
+      && targetInfo.environmentType === environmentType
+      && !targetInfo.hasLegacyWorkspace
       && project.projectPath === expectedPath
     ),
     reason: !expectedPath || !nonEmptyString(callerProjectId)
@@ -91,7 +88,7 @@ export function validateReadyThreadIdentity(thread, {
   const hasPendingHandle = nonEmptyString(threadInfo.clientThreadId) !== null;
   const target = {
     ...(threadInfo.target ?? threadInfo.projectTarget ?? {}),
-    project: threadInfo.project,
+    project: threadInfo.project ?? threadInfo.target?.project ?? threadInfo.projectTarget?.project,
   };
   const targetResult = validateProjectTarget(target, {
     callerProjectId,
