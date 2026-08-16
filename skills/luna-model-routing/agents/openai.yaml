@@ -1,4 +1,4 @@
 interface:
-  display_name: "Thread-only 模型路由"
-  short_description: "强制使用独立 Thread 承载所有任务执行与 Web-LLM"
-  default_prompt: "使用 $luna-model-routing，让当前会话只负责控制面，并把所有执行交给独立 Codex App Thread。"
+  display_name: "Luna Multi-Agent 路由"
+  short_description: "用原生 subagents 隔离任务并优先把重推理交给 Web-LLM"
+  default_prompt: "使用 $luna-model-routing：主 Agent保留执行与验收，独立探索交给原生 subagents，超过 token gate 的重推理优先交给 Web-LLM。"

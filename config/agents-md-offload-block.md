@@ -1,24 +1,15 @@
 # 全局 AGENTS.md 路由片段
 
-将此片段追加到全局 `AGENTS.md`（Codex 的 `~/.codex/AGENTS.md`，若走 Seafile 同步则合并到其真实目标），
-让 Codex 先由 `luna-model-routing` 进行模型判定，再按 transport 进入 Codex 内部模型 Thread
-或 `agentchat-code-offload` 的 Browser Adapter。详细阈值、Thread 生命周期、Provider UI 细节与
-多模态规则分别收进对应 Skill，避免全局规则堆叠。
-
-技能入口固定为 `${HOME}/.agents/skills/luna-model-routing/SKILL.md`；本仓库源文件为
-`skills/luna-model-routing/SKILL.md`。启动任务时先解析已声明的 Skill root（例如 `r1`）并完整读取该入口，
-不要把 `${HOME}/.codex/skills/luna-model-routing` 当作路由 Skill 路径；该目录属于另一套 Skill 根。
+将下列片段语义合并到全局 `AGENTS.md`。详细 token gate、任务回执与回退边界由实际安装的
+`luna-model-routing` Skill 管理，Provider 与多模态规则由 `agentchat-code-offload` 管理。
 
 ```markdown
-## Luna 模型协作路由
+## Luna / Multi-Agent / Web-LLM 路由
 
-- 主模型固定为 `gpt-5.6-luna`；Luna 负责判定、任务包、Thread/Browser Adapter 通信、回退、核验、修改和测试。
-- 确定性命令、测试、格式化、精确补丁和元数据操作留在当前 Luna 任务，不为“复杂”标签自动派遣。
-- Spark 有独立额外额度；只有 Luna 已判定值得开启内部 Thread 时，才优先把符合条件的低风险文本任务交给 Spark，不能为了消耗额度而派遣。
-- Spark、DeepSeek V4 Flash、DeepSeek V4 Pro 通过 `codex_thread` 通信；Web-LLM 通过 `browser_adapter` 通信。并行 Web-LLM 分支必须各自新建 `web_llm_thread`，由 Thread 包装 Browser Adapter；两者共享任务包与回执字段，但不得把 Web-LLM Provider 当作 Codex 模型。
-- Web-LLM 仅负责只读分析，Provider 顺序和多模态附件规则继续由 `providers.json` 与 `agentchat-code-offload` Skill 管理。
-- 原本会直接交给 V4 Pro 的架构、疑难根因和高风险文本任务，先走免费的 Web-LLM；只有该串行任务或并行分支的 Web-LLM Provider 全部失败，才允许新建一次 DeepSeek V4 Pro Thread。
-- 视觉/OCR 任务不得把纯文本 V4 Pro 当作视觉回退；并行分支的 V4 Pro fallback 也按分支分别限一次。
-- 大段源码、OCR、日志或文档由本地预处理后直接进入选定 transport，避免整包内容回灌当前 Luna 上下文。
-- 所有内部模型和 Web-LLM 结果都是待核验证据；默认由 Luna 做定点本地核验，不得把复核变成同一输入的完整二次推理。只有存在明确未决命题时，才发送最小证据和定点问题给复核路由。
+- 主控默认使用当前配置的 `gpt-5.6-luna` 与 `medium`；主 Agent保留源码修改、命令、测试、Git 和最终验收。
+- 只有真正独立、边界清晰且隔离或并行收益为正时，才使用原生 Codex subagents；通用角色为 `scout`、`reasoner`、`verifier`，默认 Luna low，最多 3 个并发。
+- 不使用 `codex_app__create_thread` 模拟内部 subagent，不依赖 `clientThreadId` 解析，不创建自定义 `.codex/agents` profile，也不硬开 `multi_agent_v2`。
+- 短小、确定性、写入密集或强依赖任务由主 Agent直接完成；写入默认串行，多个 Agent 不同时修改同一代码区域。
+- 超过 token gate 或需要跨文件/跨来源重推理时，优先使用 `agentchat-code-offload` 的 Web-LLM；默认并发 1，互不依赖且运行时已验证时最多 2，单分支 Provider 链串行。
+- Web-LLM 只负责推理，主 Agent必须本地核验后才执行。所有合格 Web Provider 失败后才允许一次 `deepseek-v4-pro-deepseek` 纯文本回退；纯文本回退不能替代视觉证据。
 ```
