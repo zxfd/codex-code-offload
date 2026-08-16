@@ -13,6 +13,8 @@ execution_mode: serial | parallel
 branch_id: 串行为 none；并行分支使用稳定 ID
 contract: scout | reasoner | verifier
 owner: 唯一责任角色
+model: 为该子 Agent 显式选择或继承的模型
+reasoning_effort: 为该子 Agent 显式选择或继承的推理强度
 scope: 目标、路径、系统和时间边界
 inputs_by_reference: 字面路径、前序 output_ref 或必要消息引用
 owned_paths: read-only | 明确且不重叠的写入路径 | none
@@ -33,6 +35,7 @@ contract
 owner
 status: completed | needs_more_context | needs_user_approval | failed | blocked
 model / model_source
+reasoning_effort
 request_id / provider
 output_ref
 changed_files / diff_stat
@@ -53,6 +56,7 @@ summary
 5. 回执只缺一个具体字段时，向原 subagent 最多续问一次。
 6. 主 Agent 定点读取证据、复跑必要检查并做最终决策。
 7. 完成后关闭或结束对应 subagent。
+8. 最终答复汇总每个实际子 Agent 的名称、contract / 职责、实际模型、实际推理强度和结果；没有使用时报告“未使用”及原因。
 
 原生 subagent 工具不可用时，主 Agent 直接执行，不创建独立 App task，也不要求用户提供线程 ID。失败只在实际缺少权限、输入、登录、审批或外部状态时才升级为用户阻塞。
 
@@ -61,6 +65,8 @@ summary
 达到 token gate 时，`reasoner` 可在其任务内或由主 Agent 调用 `agentchat-code-offload`。Provider 是推理来源，不是 Codex subagent transport；成功回执必须包含 `model_source=web_provider`、具名 provider 和 `request_id`。
 
 Provider 链串行；全部合格文本 Provider 失败后最多一次 `deepseek-v4-pro-deepseek` 回退。Web-LLM 不修改文件、不运行命令、不执行 Git 或外部领域动作。主 Agent 必须本地核验后才可实施。
+
+Web-LLM 不计入“子 Agent 使用情况”。实际调用时，在最终答复中另列 Provider、`request_id` 和用途，避免把宿主 Codex 或网页模型冒充原生 subagent。
 
 ## 审批
 
