@@ -598,5 +598,13 @@ export async function runProviderFallback({
     success: false,
     failure_reason: 'all providers unavailable',
   });
-  throw new ProviderUnavailableError(`all configured Web Reasoning providers are unavailable: ${attempts.map(item => item.provider).join(', ')}`);
+  const postSendAttempt = [...attempts].reverse().find(item => item.send_started === true);
+  throw new ProviderUnavailableError(
+    `all configured Web Reasoning providers are unavailable: ${attempts.map(item => item.provider).join(', ')}`,
+    postSendAttempt ? {
+      sendStarted: true,
+      failureClass: postSendAttempt.failure_class || null,
+      keepTabOpen: postSendAttempt.status === 'conversation_cleanup_failed',
+    } : {},
+  );
 }

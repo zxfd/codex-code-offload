@@ -182,6 +182,9 @@ test('Qwen terminal lifecycle keeps tab open when archive cannot be verified', a
   }
 
   assert.equal(caught?.name, 'ProviderUnavailableError');
+  assert.equal(caught?.sendStarted, true);
+  assert.equal(caught?.failureClass, 'conversation_cleanup_failed');
+  assert.equal(caught?.keepTabOpen, true);
   assert.equal(mockEvents.includes('close'), false);
   assert.deepEqual(mockEvents, ['run', 'archive']);
   const logFile = join(stateDir, 'events.jsonl');
