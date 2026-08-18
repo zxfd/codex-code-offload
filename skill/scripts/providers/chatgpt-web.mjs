@@ -818,6 +818,30 @@ export async function waitForNextAssistantAnswer({ tab, previousGroupCount, time
   });
 }
 
+export async function resumePendingAnswer({ tab, timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS, resumeState = {} }) {
+  const previousGroupCount = Number(resumeState.previousGroupCount);
+  if (!Number.isSafeInteger(previousGroupCount) || previousGroupCount < 0) {
+    throw new Error('ChatGPT pending response baseline is invalid');
+  }
+  try {
+    const text = await waitForNextAssistantAnswer({ tab, previousGroupCount, timeoutMs });
+    return {
+      provider: 'ChatGPT',
+      reasoning: resumeState.reasoning || null,
+      attachmentsReady: resumeState.attachmentsReady ?? null,
+      ...confirmedAssistantResponseMetadata(),
+      answer: text,
+    };
+  } catch (error) {
+    error.cacheFailure = false;
+    error.sendStarted = true;
+    error.keepTabOpen = true;
+    error.failureClass = 'post_send_response_unconfirmed';
+    error.resumeState = resumeState;
+    throw error;
+  }
+}
+
 async function conversationLinkIsVisible({ tab, pathname }) {
   const links = tab.playwright.locator('a');
   for (let index = 0; index < await links.count(); index += 1) {
@@ -995,6 +1019,12 @@ export async function run({ provider, tab, promptPath, timeoutMs = DEFAULT_PROVI
       error.cacheFailure = false;
       error.sendStarted = true;
       error.failureClass = 'post_send_response_unconfirmed';
+      error.keepTabOpen = true;
+      error.resumeState = {
+        previousGroupCount,
+        reasoning: selectedReasoning,
+        attachmentsReady: imagePaths.length ? attachmentState?.ready === true : null,
+      };
     }
     return error;
   };

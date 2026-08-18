@@ -197,3 +197,56 @@ test('Qwen terminal lifecycle keeps tab open when archive cannot be verified', a
   rmSync(providersDir, { recursive: true, force: true });
   rmSync(stateDir, { recursive: true, force: true });
 });
+
+test('pending response resumes on the same tab without submitting again', async () => {
+  const events = [];
+  const tab = { ...makeLifecycleTab(events), id: 'pending-tab' };
+  const adapter = {
+    async run() {
+      events.push('run');
+      const error = new Error('answer still generating');
+      error.cacheFailure = false;
+      error.sendStarted = true;
+      error.keepTabOpen = true;
+      error.failureClass = 'post_send_response_unconfirmed';
+      error.resumeState = { previousAnswerCount: 0 };
+      throw error;
+    },
+    async resumePendingAnswer({ resumeState }) {
+      events.push('resume');
+      assert.deepEqual(resumeState, { previousAnswerCount: 0 });
+      return { provider: 'Qwen', ...confirmedAssistantResponseMetadata(), answer: 'resumed answer' };
+    },
+    async archiveConversation() {
+      events.push('archive');
+      return { action: 'archive', confirmed: true, verification: 'sidebar_link_absent_without_reload' };
+    },
+  };
+  const { providersDir, providersPath } = makeProviderConfig();
+  const stateDir = mkdtempSync(join(tmpdir(), 'codex-web-reasoning-state-'));
+  const firstPrompt = makePromptDir('pending response test');
+  const first = await runProviderFallback({
+    browser: { tabs: { new: async () => tab, get: async () => tab } },
+    browserChannel: 'chrome', promptPath: firstPrompt.promptPath, role: 'assistant',
+    configPath: providersPath, stateDir, adapterLoader: async () => adapter,
+    requestMetadata: { request_id: 'pending-request', cross_call_resume: true },
+  });
+  assert.equal(first.status, 'pending_response');
+  assert.equal(first.pendingResponse.tabId, 'pending-tab');
+
+  const secondPrompt = makePromptDir('resume response test');
+  const second = await runProviderFallback({
+    browser: { tabs: { new: async () => tab, get: async () => tab } },
+    browserChannel: 'chrome', promptPath: secondPrompt.promptPath, role: 'assistant',
+    configPath: providersPath, stateDir, adapterLoader: async () => adapter,
+    requestMetadata: { request_id: 'pending-request', pending_response: first.pendingResponse },
+  });
+  assert.equal(second.answer, 'resumed answer');
+  assert.equal(second.resumed, true);
+  assert.deepEqual(events, ['run', 'resume', 'archive', 'close']);
+
+  rmSync(firstPrompt.promptDir, { recursive: true, force: true });
+  rmSync(secondPrompt.promptDir, { recursive: true, force: true });
+  rmSync(providersDir, { recursive: true, force: true });
+  rmSync(stateDir, { recursive: true, force: true });
+});

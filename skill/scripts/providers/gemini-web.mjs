@@ -320,11 +320,25 @@ export async function run({ provider, tab, promptPath, timeoutMs = DEFAULT_PROVI
     },
   });
   const answer = answers.nth(previousAnswerCount);
-  const text = await waitForAssistantAnswer({
-    answer,
-    stopButtons: [tab.playwright.getByRole('button', { name: /停止|Stop/i })],
-    timeoutMs,
-  });
+  let text;
+  try {
+    text = await waitForAssistantAnswer({
+      answer,
+      stopButtons: [tab.playwright.getByRole('button', { name: /停止|Stop/i })],
+      timeoutMs,
+    });
+  } catch (error) {
+    error.cacheFailure = false;
+    error.sendStarted = true;
+    error.keepTabOpen = true;
+    error.failureClass = 'post_send_response_unconfirmed';
+    error.resumeState = {
+      previousAnswerCount,
+      attachmentsReady: imagePaths.length > 0 ? attachmentState?.ready === true : null,
+      promptRemoved,
+    };
+    throw error;
+  }
   return {
     provider: 'Gemini',
     mode: provider.target.mode || 'current',
@@ -333,4 +347,34 @@ export async function run({ provider, tab, promptPath, timeoutMs = DEFAULT_PROVI
     ...confirmedAssistantResponseMetadata(),
     answer: text,
   };
+}
+
+export async function resumePendingAnswer({ tab, timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS, resumeState = {} }) {
+  if (!tab?.playwright) throw new Error('a controlled Chrome tab is required');
+  const previousAnswerCount = Number(resumeState.previousAnswerCount);
+  if (!Number.isSafeInteger(previousAnswerCount) || previousAnswerCount < 0) {
+    throw new Error('Gemini pending response baseline is invalid');
+  }
+  const answer = tab.playwright.locator('model-response').nth(previousAnswerCount);
+  try {
+    const text = await waitForAssistantAnswer({
+      answer,
+      stopButtons: [tab.playwright.getByRole('button', { name: /停止|Stop/i })],
+      timeoutMs,
+    });
+    return {
+      provider: 'Gemini',
+      promptRemoved: resumeState.promptRemoved === true,
+      attachmentsReady: resumeState.attachmentsReady ?? null,
+      ...confirmedAssistantResponseMetadata(),
+      answer: text,
+    };
+  } catch (error) {
+    error.cacheFailure = false;
+    error.sendStarted = true;
+    error.keepTabOpen = true;
+    error.failureClass = 'post_send_response_unconfirmed';
+    error.resumeState = resumeState;
+    throw error;
+  }
 }

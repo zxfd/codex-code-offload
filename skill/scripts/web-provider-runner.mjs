@@ -335,6 +335,74 @@ export async function runProviderFallback({
   const ttlMs = Number(config.health_ttl_seconds || 300) * 1_000;
   const attempts = [];
 
+  const pendingResponse = requestMetadata.pending_response;
+  if (pendingResponse) {
+    const providerId = String(pendingResponse.providerId || '');
+    const provider = config.providers[providerId];
+    if (!provider || !route.priority.includes(providerId)) {
+      throw new Error('pending response Provider is not valid for the current route');
+    }
+    if (!pendingResponse.tabId || !pendingResponse.resumeState) {
+      throw new Error('pending response receipt is incomplete');
+    }
+    const tab = await browser.tabs.get(String(pendingResponse.tabId));
+    const module = await adapterLoader(provider.adapter);
+    if (typeof module.resumePendingAnswer !== 'function') {
+      throw new Error(`Provider ${providerId} does not support pending response resume`);
+    }
+    let result;
+    try {
+      const rawResult = await module.resumePendingAnswer({
+        providerId,
+        provider,
+        tab,
+        timeoutMs,
+        resumeState: pendingResponse.resumeState,
+      });
+      assertConfirmedAssistantResponse(rawResult);
+      result = responseValidator === null
+        ? rawResult
+        : await validateStructuredResponse({ responseValidator, rawResult, requestId, providerId, provider, requestMetadata });
+      const conversationCleanup = isTerminalAnswer(result.answer)
+        ? await cleanupWebProvider({ providerId, provider, tab, uiEvidence, adapterLoader })
+        : null;
+      logEvent(stateDir, {
+        timestamp: startedAt,
+        request_id: requestId,
+        task_role: role,
+        provider: providerId,
+        provider_attempts: [{ provider: providerId, status: 'resumed_success', attempt: 1 }],
+        context_rounds: requestMetadata.context_rounds || 1,
+        modality: route.modality,
+        image_count: Number(pendingResponse.imageCount) || 0,
+        result_length: result.answer.length,
+        response_confirmation: result.response_confirmation || null,
+        response_complete: result.response_complete === true,
+        response_confirmed: result.response_confirmed === true,
+        response_is_new: result.response_is_new === true,
+        generation_complete: result.generationComplete === true,
+        structured_json_available: result.structuredJsonAvailable === true,
+        conversation_cleanup: conversationCleanup?.action || null,
+        conversation_cleanup_confirmed: conversationCleanup?.confirmed === true,
+        conversation_cleanup_verification: conversationCleanup?.verification || null,
+        success: true,
+      });
+      await closeTab(tab);
+      return { ...result, providerId, requestId, resumed: true, conversationCleanup };
+    } catch (error) {
+      if (error?.failureClass === 'post_send_response_unconfirmed' && error?.resumeState) {
+        return {
+          status: 'pending_response',
+          requestId,
+          pendingResponse: { ...pendingResponse, requestId, resumeState: error.resumeState },
+        };
+      }
+      error.sendStarted = true;
+      error.keepTabOpen = true;
+      throw error;
+    }
+  }
+
   for (const [providerIndex, providerId] of route.priority.entries()) {
     const provider = config.providers[providerId];
     const providerSignature = targetSignature(provider);
@@ -507,6 +575,37 @@ export async function runProviderFallback({
         // The adapter normally removes the attempt prompt immediately after submit.
       }
       const reason = String(error?.message || error).slice(0, 500);
+      if (
+        requestMetadata.cross_call_resume === true
+        && error?.sendStarted === true
+        && error?.failureClass === 'post_send_response_unconfirmed'
+        && error?.resumeState
+      ) {
+        logEvent(stateDir, {
+          timestamp: startedAt,
+          request_id: requestId,
+          task_role: role,
+          provider: providerId,
+          provider_attempts: [{ provider: providerId, status: 'pending_response', send_started: true }],
+          context_rounds: requestMetadata.context_rounds || 1,
+          modality: route.modality,
+          image_count: mediaFiles.length,
+          result_length: 0,
+          success: false,
+          pending_response: true,
+        });
+        return {
+          status: 'pending_response',
+          requestId,
+          pendingResponse: {
+            requestId,
+            providerId,
+            tabId: tab.id,
+            imageCount: mediaFiles.length,
+            resumeState: error.resumeState,
+          },
+        };
+      }
       let uiEvidenceDiscarded = false;
       if (uiEvidence && error?.uiEvidencePath) {
         try {
