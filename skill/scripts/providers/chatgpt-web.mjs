@@ -40,6 +40,8 @@ const NEW_CHAT_LABELS = ['新聊天', 'New chat'];
 const CHATGPT_STOP_GENERATION_LABELS = ['停止回答', 'Stop generating', 'Stop generating response'];
 const CHATGPT_MORE_LABELS = ['更多', 'More'];
 const CHATGPT_ARCHIVE_LABELS = ['归档', 'Archive'];
+const CHATGPT_COMPOSER_SELECTOR = '#prompt-textarea, form[data-type="unified-composer"] [contenteditable="true"]';
+const CHATGPT_SEND_SELECTOR = 'button[data-testid="send-button"]';
 
 const CHATGPT_TWO_STEP_MIN_CHARS = 4_000;
 const CONTEXT_SECTION_HEADERS = ['CODE_CONTEXT', 'DOCUMENT_CONTEXT', 'ADDITIONAL_CONTEXT'];
@@ -83,6 +85,30 @@ async function exactlyOneVisible(locator, message) {
   }
   if (visible.length !== 1) throw new Error(`${message}: visible_matches=${visible.length}`);
   return visible[0];
+}
+
+export async function visibleComposer(tab) {
+  const named = tab.playwright.getByRole('textbox', { name: '与 ChatGPT 聊天', exact: true });
+  if (await locatorVisible(named)) return named.first();
+  const fallback = tab.playwright.locator(CHATGPT_COMPOSER_SELECTOR);
+  const visible = [];
+  for (let index = 0; index < await fallback.count(); index += 1) {
+    const candidate = fallback.nth(index);
+    if (await locatorVisible(candidate)) visible.push(candidate);
+  }
+  return visible.length === 1 ? visible[0] : null;
+}
+
+export async function visibleSendControl(tab) {
+  const named = tab.playwright.getByRole('button', { name: '发送提示', exact: true });
+  if (await locatorVisible(named)) return named.first();
+  const fallback = tab.playwright.locator(CHATGPT_SEND_SELECTOR);
+  const visible = [];
+  for (let index = 0; index < await fallback.count(); index += 1) {
+    const candidate = fallback.nth(index);
+    if (await locatorVisible(candidate)) visible.push(candidate);
+  }
+  return visible.length === 1 ? visible[0] : null;
 }
 
 async function firstVisibleNamedControl({ tab, role, names, message }) {
@@ -343,8 +369,8 @@ async function recoverRateLimitAfterSubmit({ tab }) {
 
 async function ensureCurrentConversationReady({ tab, provider, uiEvidence, stage }) {
   const rateLimit = rateLimitDialog(tab);
-  const input = tab.playwright.getByRole('textbox', { name: '与 ChatGPT 聊天', exact: true });
-  if (await locatorVisible(rateLimit) || !await locatorVisible(input) || !await input.isEnabled()) {
+  const input = await visibleComposer(tab);
+  if (await locatorVisible(rateLimit) || !input || !await input.isEnabled()) {
     await unavailableWithEvidence({
       tab,
       message: 'ChatGPT current conversation input is unavailable',
@@ -358,8 +384,6 @@ async function ensureCurrentConversationReady({ tab, provider, uiEvidence, stage
 }
 
 async function waitForComposerSubmissionReadiness({ tab, provider, uiEvidence, stage, promptLength }) {
-  const input = tab.playwright.getByRole('textbox', { name: '与 ChatGPT 聊天', exact: true });
-  const send = tab.playwright.getByRole('button', { name: '发送提示', exact: true });
   const rateLimit = rateLimitDialog(tab);
   const deadline = Date.now() + chatGptComposerSettleTimeout(promptLength);
   while (Date.now() < deadline) {
@@ -373,12 +397,9 @@ async function waitForComposerSubmissionReadiness({ tab, provider, uiEvidence, s
         names: ['发送提示', '与 ChatGPT 聊天', ...STRENGTH_TRIGGER_LABELS],
       });
     }
-    if (
-      await locatorVisible(input)
-      && await input.isEnabled()
-      && await locatorVisible(send)
-      && await send.isEnabled()
-    ) {
+    const input = await visibleComposer(tab);
+    const send = await visibleSendControl(tab);
+    if (input && await input.isEnabled() && send && await send.isEnabled()) {
       return send;
     }
     await tab.playwright.waitForTimeout(COMPOSER_READY_POLL_MS);
@@ -514,14 +535,24 @@ async function composerTextDigest(composer) {
     value: typeof element.value === 'string' ? element.value : '',
     innerText: typeof element.innerText === 'string' ? element.innerText : '',
     textContent: typeof element.textContent === 'string' ? element.textContent : '',
+    blockText: Array.from(element.children || [])
+      .map(child => typeof child.textContent === 'string' ? child.textContent : String(child.innerText || ''))
+      .join('\n'),
   }));
   const fields = typeof observed === 'string'
-    ? { value: '', innerText: observed, textContent: observed }
-    : observed || { value: '', innerText: '', textContent: '' };
+    ? { value: '', innerText: observed, textContent: observed, blockText: '' }
+    : observed || { value: '', innerText: '', textContent: '', blockText: '' };
+  const normalizedFields = [fields.value, fields.innerText, fields.textContent, fields.blockText]
+    .map(value => String(value || '').replace(/\r\n?/gu, '\n'));
   const rawText = [fields.value, fields.innerText, fields.textContent]
     .map(value => String(value || '').replace(/\r\n?/gu, '\n'))
     .find(value => value.length > 0) || '';
   const text = rawText.trim();
+  const candidateTexts = [...new Set([
+    ...normalizedFields,
+    ...normalizedFields.map(value => value.trim()),
+    fields.blockText ? `${String(fields.blockText).replace(/\r\n?/gu, '\n')}\n` : '',
+  ])].filter(value => value.length > 0);
   return {
     characters: text.length,
     bytes: Buffer.byteLength(text, 'utf8'),
@@ -532,7 +563,31 @@ async function composerTextDigest(composer) {
     observedValueBytes: Buffer.byteLength(String(fields.value || ''), 'utf8'),
     observedInnerTextBytes: Buffer.byteLength(String(fields.innerText || ''), 'utf8'),
     observedTextContentBytes: Buffer.byteLength(String(fields.textContent || ''), 'utf8'),
+    candidates: candidateTexts.map(value => ({
+      characters: value.length,
+      bytes: Buffer.byteLength(value, 'utf8'),
+      sha256: sha256(value),
+    })),
   };
+}
+
+function matchingComposerDigest(digest, expectedBytes, expectedSha256) {
+  return digest?.candidates?.find(candidate => (
+    candidate.bytes === expectedBytes && candidate.sha256 === expectedSha256
+  )) || null;
+}
+
+async function visiblePastedTextRevealControls(tab) {
+  if (!tab?.playwright?.getByRole) return [];
+  const locator = tab.playwright.getByRole('button', {
+    name: /^(?:在文本字段中显示|Show in text field)$/u,
+  });
+  const visible = [];
+  for (let index = 0; index < await locator.count(); index += 1) {
+    const candidate = locator.nth(index);
+    if (await locatorVisible(candidate)) visible.push(candidate);
+  }
+  return visible;
 }
 
 function readMacSystemClipboardText() {
@@ -618,8 +673,10 @@ export async function pasteSystemClipboardText({
 
   let lastDigest = null;
   let fillFallbackUsed = false;
+  let pastedTextAttachmentRoundTripUsed = false;
   let bridgeStage = 'fill_empty';
   try {
+    const initialPastedTextControls = await visiblePastedTextRevealControls(tab);
     await composer.fill('', { timeoutMs: 30_000 });
     bridgeStage = 'focus_composer';
     await composer.click({ timeoutMs: 10_000 });
@@ -631,18 +688,35 @@ export async function pasteSystemClipboardText({
     const fillFallbackAt = Date.now() + swallowedPasteGraceMs;
     while (Date.now() < deadline) {
       lastDigest = await composerTextDigest(composer);
-      if (lastDigest.bytes === expectedBytes && lastDigest.sha256 === expectedSha256) {
+      const matchingDigest = matchingComposerDigest(lastDigest, expectedBytes, expectedSha256);
+      if (matchingDigest) {
         return {
           clipboardPasteConfirmed: true,
           clipboard_paste_confirmed: true,
           clipboardSha256Confirmed: true,
           clipboard_sha256_confirmed: true,
-          clipboardInsertionMethod: fillFallbackUsed ? 'verified_fill_after_swallowed_paste' : 'virtual_clipboard_paste',
-          clipboard_insertion_method: fillFallbackUsed ? 'verified_fill_after_swallowed_paste' : 'virtual_clipboard_paste',
+          clipboardInsertionMethod: pastedTextAttachmentRoundTripUsed
+            ? 'verified_pasted_text_attachment_round_trip'
+            : fillFallbackUsed ? 'verified_fill_after_swallowed_paste' : 'virtual_clipboard_paste',
+          clipboard_insertion_method: pastedTextAttachmentRoundTripUsed
+            ? 'verified_pasted_text_attachment_round_trip'
+            : fillFallbackUsed ? 'verified_fill_after_swallowed_paste' : 'virtual_clipboard_paste',
           clipboardFillFallbackUsed: fillFallbackUsed,
           clipboard_fill_fallback_used: fillFallbackUsed,
-          pastedCharacters: lastDigest.characters,
+          pastedTextAttachmentRoundTripUsed,
+          pasted_text_attachment_round_trip_used: pastedTextAttachmentRoundTripUsed,
+          pastedCharacters: matchingDigest.characters,
         };
+      }
+      if (!pastedTextAttachmentRoundTripUsed && lastDigest.bytes === 0) {
+        const pastedTextControls = await visiblePastedTextRevealControls(tab);
+        if (pastedTextControls.length > initialPastedTextControls.length) {
+          bridgeStage = 'reveal_pasted_text_attachment';
+          await pastedTextControls.at(-1).click({ timeoutMs: 10_000 });
+          pastedTextAttachmentRoundTripUsed = true;
+          await tab.playwright.waitForTimeout(250);
+          continue;
+        }
       }
       if (!fillFallbackUsed && lastDigest.bytes === 0 && Date.now() >= fillFallbackAt) {
         bridgeStage = 'fill_verified_fallback';

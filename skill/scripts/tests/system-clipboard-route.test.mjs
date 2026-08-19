@@ -94,6 +94,18 @@ test('system clipboard route requires one ChatGPT Provider, no local fallback, a
   );
 });
 
+test('system clipboard transport supports a single-ChatGPT multimodal route', () => {
+  const configured = config();
+  const requestMetadata = { ...metadata(), modality: 'multimodal' };
+  const route = resolveProviderRoute(configured, requestMetadata);
+  assert.doesNotThrow(() => validateSystemClipboardRoute({
+    config: configured,
+    route,
+    requestMetadata,
+    promptText: 'Inspect the approved images and bounded clipboard text.',
+  }));
+});
+
 test('runner records a verified clipboard paste, validates JSON, archives, and closes the tab', async () => {
   const prompt = makePrompt();
   const providerConfig = makeConfig(config());

@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -26,6 +26,10 @@ const ADAPTERS = {
   'qwen-web': './providers/qwen-web.mjs',
   'gemini-web': './providers/gemini-web.mjs',
 };
+const RUNNER_SOURCE_URL = new URL(import.meta.url);
+RUNNER_SOURCE_URL.search = '';
+RUNNER_SOURCE_URL.hash = '';
+const RUNNER_LOADED_MTIME_MS = statSync(RUNNER_SOURCE_URL).mtimeMs;
 
 const DEFAULT_MODALITY = 'text';
 export const SYSTEM_CLIPBOARD_TEXT_TRANSPORT = 'system_clipboard';
@@ -129,7 +133,9 @@ export function resolveProviderRoute(config, requestMetadata = {}) {
 
 export function validateSystemClipboardRoute({ config, route, requestMetadata, promptText = null } = {}) {
   if (requestMetadata?.text_transport !== SYSTEM_CLIPBOARD_TEXT_TRANSPORT) return null;
-  if (route?.modality !== 'text') throw new Error('system clipboard text transport requires the text route');
+  if (!['text', 'multimodal'].includes(route?.modality)) {
+    throw new Error('system clipboard text transport requires the text or multimodal route');
+  }
   if (!Array.isArray(route.priority) || route.priority.length !== 1 || route.localFallback === true) {
     throw new Error('system clipboard text transport requires exactly one Provider and local_fallback false');
   }
@@ -221,6 +227,10 @@ export function isCoolingDown(entry, ttlMs, now) {
     && Date.parse(entry.last_failure) + ttlMs > now;
 }
 
+export function isBrowserDisconnectedReason(reason) {
+  return /^(?:Browser is not available:|native pipe closed before response)/u.test(String(reason || ''));
+}
+
 function targetSignature(provider) {
   return JSON.stringify({ adapter: provider.adapter, url: provider.url, target: provider.target });
 }
@@ -228,7 +238,17 @@ function targetSignature(provider) {
 async function importAdapter(adapter) {
   const path = ADAPTERS[adapter];
   if (!path) throw new Error(`unknown provider adapter: ${adapter}`);
-  return import(path);
+  const adapterUrl = new URL(path, RUNNER_SOURCE_URL);
+  adapterUrl.searchParams.set('mtime', String(statSync(adapterUrl).mtimeMs));
+  return import(adapterUrl.href);
+}
+
+async function refreshedRunnerModule() {
+  const currentMtimeMs = statSync(RUNNER_SOURCE_URL).mtimeMs;
+  if (currentMtimeMs === RUNNER_LOADED_MTIME_MS) return null;
+  const refreshedUrl = new URL(RUNNER_SOURCE_URL);
+  refreshedUrl.searchParams.set('mtime', String(currentMtimeMs));
+  return import(refreshedUrl.href);
 }
 
 function isTerminalAnswer(answer) {
@@ -294,21 +314,24 @@ async function cleanupWebProvider({ providerId, provider, tab, uiEvidence = fals
   return module.archiveConversation({ providerId, provider, tab, uiEvidence });
 }
 
-export async function runProviderFallback({
-  browser,
-  browserChannel,
-  promptPath,
-  role,
-  requestMetadata = {},
-  configPath = DEFAULT_CONFIG_PATH,
-  stateDir = DEFAULT_STATE_DIR,
-  timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS,
-  tabs = new Map(),
-  uiEvidence = false,
-  imagePaths = [],
-  responseValidator = null,
-  adapterLoader = importAdapter,
-}) {
+export async function runProviderFallback(options) {
+  const refreshed = await refreshedRunnerModule();
+  if (refreshed) return refreshed.runProviderFallback(options);
+  const {
+    browser,
+    browserChannel,
+    promptPath,
+    role,
+    requestMetadata = {},
+    configPath = DEFAULT_CONFIG_PATH,
+    stateDir = DEFAULT_STATE_DIR,
+    timeoutMs = DEFAULT_PROVIDER_ANSWER_TIMEOUT_MS,
+    tabs = new Map(),
+    uiEvidence = false,
+    imagePaths = [],
+    responseValidator = null,
+    adapterLoader = importAdapter,
+  } = options;
   if (!browser?.tabs?.new) throw new Error('a controlled Browser is required');
   assertChromeBrowser(browser, browserChannel);
   const config = loadProviderConfig(configPath);
@@ -426,11 +449,11 @@ export async function runProviderFallback({
     const attemptPrompt = makeAttemptPrompt(promptText);
     const tabKey = `${requestId}:${providerId}`;
     let tab = continuation ? tabs.get(tabKey) : null;
-    if (!tab) {
-      tab = await browser.tabs.new();
-      tabs.set(tabKey, tab);
-    }
     try {
+      if (!tab) {
+        tab = await browser.tabs.new();
+        tabs.set(tabKey, tab);
+      }
       const rawResult = await runWebProvider({
         providerId,
         provider,
@@ -575,6 +598,10 @@ export async function runProviderFallback({
         // The adapter normally removes the attempt prompt immediately after submit.
       }
       const reason = String(error?.message || error).slice(0, 500);
+      if (isBrowserDisconnectedReason(reason)) {
+        error.cacheFailure = false;
+        error.failureClass = 'browser_disconnected';
+      }
       if (
         requestMetadata.cross_call_resume === true
         && error?.sendStarted === true

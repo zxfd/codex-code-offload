@@ -7,10 +7,12 @@ import {
   isChatGptAnswerGenerating,
   locateNewAssistantAnswer,
   pasteSystemClipboardText,
+  visibleComposer,
+  visibleSendControl,
   waitForCurrentAllowedSelection,
   waitForNextAssistantAnswer,
 } from '../providers/chatgpt-web.mjs';
-import { assertChromeBrowser, isCoolingDown } from '../web-provider-runner.mjs';
+import { assertChromeBrowser, isBrowserDisconnectedReason, isCoolingDown } from '../web-provider-runner.mjs';
 
 function makeAnswer(text) {
   return {
@@ -150,6 +152,30 @@ test('ChatGPT waits for a temporarily missing current reasoning-strength control
   });
 });
 
+test('ChatGPT falls back to stable composer and send selectors when a dialog strips accessible names', async () => {
+  const hidden = {
+    async count() { return 0; },
+    first() { return this; },
+  };
+  const visible = {
+    async count() { return 1; },
+    first() { return this; },
+    nth() { return this; },
+    async isVisible() { return true; },
+  };
+  const tab = {
+    playwright: {
+      getByRole() { return hidden; },
+      locator(selector) {
+        assert.ok(selector.includes('#prompt-textarea') || selector.includes('send-button'));
+        return visible;
+      },
+    },
+  };
+  assert.equal(await visibleComposer(tab), visible);
+  assert.equal(await visibleSendControl(tab), visible);
+});
+
 test('legacy negative health entries do not suppress ChatGPT', () => {
   const now = Date.now();
   const targetSignature = 'same-target';
@@ -253,6 +279,12 @@ test('Web-LLM runner accepts only the user Chrome browser', () => {
   );
 });
 
+test('runner classifies Chrome bridge disconnect messages as transient', () => {
+  assert.equal(isBrowserDisconnectedReason('Browser is not available: disconnected-id'), true);
+  assert.equal(isBrowserDisconnectedReason('native pipe closed before response'), true);
+  assert.equal(isBrowserDisconnectedReason('ChatGPT model/reasoning selection failed'), false);
+});
+
 function makeClipboardPasteFixture({ systemText, pastedText = null, pressError = false, wrapPastedText = false }) {
   const state = { composerText: 'stale', virtualClipboardText: '', events: [] };
   const composer = {
@@ -341,6 +373,63 @@ test('ChatGPT system clipboard transport fills only after an empty swallowed pas
     `fill:${text.length}`,
     'clipboard:0',
   ]);
+});
+
+test('ChatGPT verifies a long paste that becomes a pasted-text attachment', async () => {
+  const text = 'LINE-1\nLINE-2\n';
+  const state = { attachment: false, revealed: false, virtualClipboardText: '' };
+  const composer = {
+    async fill(value) {
+      state.attachment = value.length > 0;
+      state.revealed = false;
+    },
+    async click() {},
+    async press(key) {
+      if (key === 'ControlOrMeta+V') state.attachment = true;
+    },
+    async evaluate() {
+      if (!state.revealed) return { value: '', innerText: '', textContent: '', blockText: '' };
+      return {
+        value: '',
+        innerText: 'LINE-1\n\nLINE-2\n\n',
+        textContent: 'LINE-1LINE-2',
+        blockText: 'LINE-1\nLINE-2',
+      };
+    },
+  };
+  const revealControl = {
+    async count() { return 1; },
+    first() { return this; },
+    async isVisible() { return true; },
+    async click() { state.revealed = true; state.attachment = false; },
+  };
+  const tab = {
+    playwright: {
+      getByRole() {
+        return {
+          async count() { return state.attachment ? 1 : 0; },
+          nth() { return revealControl; },
+        };
+      },
+      async waitForTimeout() {},
+    },
+    clipboard: {
+      async writeText(value) { state.virtualClipboardText = value; },
+    },
+  };
+  const result = await pasteSystemClipboardText({
+    tab,
+    composer,
+    expectedBytes: Buffer.byteLength(text),
+    expectedSha256: createHash('sha256').update(text).digest('hex'),
+    timeoutMs: 100,
+    swallowedPasteGraceMs: 10,
+    readSystemClipboardText: () => text,
+  });
+  assert.equal(result.clipboardPasteConfirmed, true);
+  assert.equal(result.clipboardSha256Confirmed, true);
+  assert.equal(result.clipboardInsertionMethod, 'verified_pasted_text_attachment_round_trip');
+  assert.equal(result.pastedTextAttachmentRoundTripUsed, true);
 });
 
 test('ChatGPT system clipboard transport fails after paste when the composer digest mismatches', async () => {
