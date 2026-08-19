@@ -642,7 +642,9 @@ export async function runProviderFallback({
           ? 'unavailable'
           : error?.failureClass === 'conversation_cleanup_failed'
             ? 'conversation_cleanup_failed'
-            : 'ambiguous_post_send',
+            : error?.sendStarted === true
+              ? 'ambiguous_post_send'
+              : 'transient_unavailable',
         reason,
         send_started: error?.sendStarted === true,
         failure_class: error?.failureClass || null,

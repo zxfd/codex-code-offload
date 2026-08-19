@@ -7,6 +7,7 @@ import {
   isChatGptAnswerGenerating,
   locateNewAssistantAnswer,
   pasteSystemClipboardText,
+  waitForCurrentAllowedSelection,
   waitForNextAssistantAnswer,
 } from '../providers/chatgpt-web.mjs';
 import { assertChromeBrowser, isCoolingDown } from '../web-provider-runner.mjs';
@@ -118,6 +119,35 @@ test('ChatGPT response confirmation accepts only a newly created assistant messa
     checkInterrupted: async () => {},
   });
   assert.equal(answer, 'PROVIDER_OK:ChatGPT');
+});
+
+test('ChatGPT waits for a temporarily missing current reasoning-strength control', async () => {
+  let probes = 0;
+  const tab = {
+    playwright: {
+      getByRole() {
+        return { async count() { return 0; } };
+      },
+      async evaluate() {
+        probes += 1;
+        return probes >= 3 ? '极高' : null;
+      },
+      async waitForTimeout() {},
+    },
+  };
+  const selection = await waitForCurrentAllowedSelection({
+    tab,
+    provider: { target: { reasoning_tiers: ['最高', '极高', '高', '中'] } },
+    retryMs: 1_000,
+  });
+  assert.equal(probes, 3);
+  assert.deepEqual(selection, {
+    tier: '极高',
+    label: '极高',
+    unavailableTiers: [],
+    selectionSource: 'current',
+    modelVerified: false,
+  });
 });
 
 test('legacy negative health entries do not suppress ChatGPT', () => {

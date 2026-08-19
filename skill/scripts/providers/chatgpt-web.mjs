@@ -35,6 +35,7 @@ const LONG_PROMPT_CHARS = 8_000;
 const SHORT_COMPOSER_SETTLE_MS = 20_000;
 const LONG_COMPOSER_SETTLE_MS = 120_000;
 const POST_FILL_STRENGTH_RETRY_MS = 10_000;
+const INITIAL_STRENGTH_RETRY_MS = 10_000;
 const NEW_CHAT_LABELS = ['新聊天', 'New chat'];
 const CHATGPT_STOP_GENERATION_LABELS = ['停止回答', 'Stop generating', 'Stop generating response'];
 const CHATGPT_MORE_LABELS = ['更多', 'More'];
@@ -53,7 +54,7 @@ export function chatGptComposerSettleTimeout(promptLength) {
     : SHORT_COMPOSER_SETTLE_MS;
 }
 
-async function unavailableWithEvidence({ tab, message, stage, provider, uiEvidence, names }) {
+async function unavailableWithEvidence({ tab, message, stage, provider, uiEvidence, names, metadata }) {
   let uiEvidencePath;
   if (uiEvidence) {
     try {
@@ -71,7 +72,7 @@ async function unavailableWithEvidence({ tab, message, stage, provider, uiEviden
       // Bounded diagnostic capture must not broaden browser inspection.
     }
   }
-  unavailable(message, { uiEvidencePath });
+  unavailable(message, { ...metadata, uiEvidencePath });
 }
 
 async function exactlyOneVisible(locator, message) {
@@ -185,7 +186,7 @@ async function keepCurrentAllowedSelection({ tab, provider }) {
   return selectedReasoning;
 }
 
-async function waitForCurrentAllowedSelection({ tab, provider, retryMs = 0 }) {
+export async function waitForCurrentAllowedSelection({ tab, provider, retryMs = 0 }) {
   const deadline = Date.now() + retryMs;
   do {
     const current = await keepCurrentAllowedSelection({ tab, provider });
@@ -471,6 +472,10 @@ async function selectBestAvailableReasoningTier({ tab, provider, uiEvidence, sta
       provider,
       uiEvidence,
       names: ['聊天', '高级', `模型 ${provider.target.model}`, '思考强度', ...STRENGTH_TRIGGER_LABELS],
+      metadata: {
+        cacheFailure: false,
+        failureClass: 'pre_send_reasoning_unconfirmed',
+      },
     });
   }
 }
@@ -974,7 +979,16 @@ export async function run({ provider, tab, promptPath, timeoutMs = DEFAULT_PROVI
     await runChatGptStageWithRecovery({ tab, action: () => ensureChatMode({ tab, provider, uiEvidence, stage: 'initial_chat_mode' }) });
   }
   await runChatGptStageWithRecovery({ tab, action: () => ensureCurrentConversationReady({ tab, provider, uiEvidence, stage: 'initial_recovery' }) });
-  let selectedReasoning = await runChatGptStageWithRecovery({ tab, action: () => ensureConfiguredReasoningSelection({ tab, provider, uiEvidence, stage: 'initial_reasoning_selection' }) });
+  let selectedReasoning = await runChatGptStageWithRecovery({
+    tab,
+    action: () => ensureConfiguredReasoningSelection({
+      tab,
+      provider,
+      uiEvidence,
+      stage: 'initial_reasoning_selection',
+      currentSelectionRetryMs: INITIAL_STRENGTH_RETRY_MS,
+    }),
+  });
   verifyClipboardStage('post_setup');
 
   const assistantGroups = tab.playwright.locator('[data-message-author-role="assistant"]');

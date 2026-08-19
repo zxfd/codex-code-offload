@@ -64,6 +64,8 @@ cd codex-code-offload
 
 Codex 通过浏览器自动化驱动这些页面。登录状态、模型/强度选择与可见附件确认都由 Skill 内部校验。
 
+ChatGPT 新会话加载时，当前思考强度控件可能比输入框更晚出现。Adapter 会在初始选择阶段等待最多 10 秒再决定是否打开完整模型菜单；若仍无法确认，这类发送前 UI 瞬态失败不会写入 Provider 负面健康缓存，下一请求仍会重新核验 ChatGPT。
+
 ## 启用自动路由（可选）
 
 把 `config/agents-md-offload-block.md` 中的片段合并到你的全局 `AGENTS.md`，Codex 就会在大型分析任务
